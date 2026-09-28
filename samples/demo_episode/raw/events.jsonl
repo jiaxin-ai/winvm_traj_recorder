@@ -1,0 +1,93 @@
+{"t_ms": 1790044330000, "type": "recording_start", "path": "recording.mp4"}
+{"t_ms": 1790044330000, "type": "window_active", "title": "Part1 - SOLIDWORKS", "process": "SLDWORKS.exe"}
+{"t_ms": 1790044330050, "type": "screenshot", "path": "screenshots/000000.png", "kind": "settle"}
+{"t_ms": 1790044332000, "type": "process_event", "op": "start", "name": "python.exe", "cmdline": "python helper.py", "pid": 5555, "user": "WIN-VM\\demo"}
+{"t_ms": 1790044332100, "type": "mouse_down", "button": "left", "x": 812, "y": 436}
+{"t_ms": 1790044332105, "type": "uia_query", "x": 812, "y": 436, "target": {"name": "Extruded Boss/Base", "control_type": "Button", "automation_id": "CommandManager_Extrude", "window": "SOLIDWORKS", "bounding_rect": [780, 420, 860, 455]}}
+{"t_ms": 1790044332108, "type": "screenshot", "path": "screenshots/000001.png", "kind": "trigger"}
+{"t_ms": 1790044332220, "type": "mouse_up", "button": "left", "x": 813, "y": 436}
+{"t_ms": 1790044332500, "type": "file_event", "op": "created", "path": "C:/task/a.txt", "size": 20480}
+{"t_ms": 1790044333220, "type": "screenshot", "path": "screenshots/000002.png", "kind": "settle"}
+{"t_ms": 1790044334050, "type": "mouse_down", "button": "left", "x": 300, "y": 300}
+{"t_ms": 1790044334055, "type": "uia_query", "x": 300, "y": 300, "target": null}
+{"t_ms": 1790044334058, "type": "screenshot", "path": "screenshots/000003.png", "kind": "trigger"}
+{"t_ms": 1790044334400, "type": "mouse_up", "button": "left", "x": 400, "y": 380}
+{"t_ms": 1790044335400, "type": "screenshot", "path": "screenshots/000004.png", "kind": "settle"}
+{"t_ms": 1790044336050, "type": "mouse_down", "button": "left", "x": 150, "y": 220}
+{"t_ms": 1790044336055, "type": "uia_query", "x": 150, "y": 220, "target": {"name": "Sketch1", "control_type": "TreeItem", "automation_id": "FeatureTree_Sketch1", "window": "SOLIDWORKS", "bounding_rect": [120, 210, 260, 235]}}
+{"t_ms": 1790044336058, "type": "screenshot", "path": "screenshots/000005.png", "kind": "trigger"}
+{"t_ms": 1790044336100, "type": "mouse_up", "button": "left", "x": 150, "y": 220}
+{"t_ms": 1790044336250, "type": "mouse_down", "button": "left", "x": 151, "y": 221}
+{"t_ms": 1790044336255, "type": "uia_query", "x": 151, "y": 221, "target": {"name": "Sketch1", "control_type": "TreeItem", "automation_id": "FeatureTree_Sketch1", "window": "SOLIDWORKS", "bounding_rect": [120, 210, 260, 235]}}
+{"t_ms": 1790044336258, "type": "screenshot", "path": "screenshots/000006.png", "kind": "trigger"}
+{"t_ms": 1790044336300, "type": "mouse_up", "button": "left", "x": 151, "y": 221}
+{"t_ms": 1790044337300, "type": "screenshot", "path": "screenshots/000007.png", "kind": "settle"}
+{"t_ms": 1790044338050, "type": "scroll", "x": 500, "y": 400, "dx": 0, "dy": -1}
+{"t_ms": 1790044338058, "type": "screenshot", "path": "screenshots/000008.png", "kind": "trigger"}
+{"t_ms": 1790044338150, "type": "scroll", "x": 500, "y": 400, "dx": 0, "dy": -1}
+{"t_ms": 1790044338300, "type": "scroll", "x": 500, "y": 400, "dx": 0, "dy": -1}
+{"t_ms": 1790044339300, "type": "screenshot", "path": "screenshots/000009.png", "kind": "settle"}
+{"t_ms": 1790044340050, "type": "key_down", "key": "ctrl"}
+{"t_ms": 1790044340100, "type": "key_down", "key": "s"}
+{"t_ms": 1790044340108, "type": "screenshot", "path": "screenshots/000010.png", "kind": "trigger"}
+{"t_ms": 1790044340150, "type": "key_up", "key": "s"}
+{"t_ms": 1790044340180, "type": "key_up", "key": "ctrl"}
+{"t_ms": 1790044340500, "type": "file_event", "op": "modified", "path": "C:/task/Part1.sldprt", "size": 1048576}
+{"t_ms": 1790044341180, "type": "screenshot", "path": "screenshots/000011.png", "kind": "settle"}
+{"t_ms": 1790044342050, "type": "uia_focused", "target": {"name": "Sketch1", "control_type": "Edit", "automation_id": "FeatureTree_RenameBox", "window": "SOLIDWORKS", "bounding_rect": [120, 210, 260, 235]}}
+{"t_ms": 1790044342050, "type": "key_down", "key": "h"}
+{"t_ms": 1790044342058, "type": "screenshot", "path": "screenshots/000012.png", "kind": "trigger"}
+{"t_ms": 1790044342060, "type": "key_up", "key": "h"}
+{"t_ms": 1790044342150, "type": "key_down", "key": "e"}
+{"t_ms": 1790044342158, "type": "screenshot", "path": "screenshots/000013.png", "kind": "trigger"}
+{"t_ms": 1790044342160, "type": "key_up", "key": "e"}
+{"t_ms": 1790044342250, "type": "key_down", "key": "l"}
+{"t_ms": 1790044342258, "type": "screenshot", "path": "screenshots/000014.png", "kind": "trigger"}
+{"t_ms": 1790044342260, "type": "key_up", "key": "l"}
+{"t_ms": 1790044342350, "type": "key_down", "key": "l"}
+{"t_ms": 1790044342358, "type": "screenshot", "path": "screenshots/000015.png", "kind": "trigger"}
+{"t_ms": 1790044342360, "type": "key_up", "key": "l"}
+{"t_ms": 1790044342450, "type": "key_down", "key": "x"}
+{"t_ms": 1790044342458, "type": "screenshot", "path": "screenshots/000016.png", "kind": "trigger"}
+{"t_ms": 1790044342460, "type": "key_up", "key": "x"}
+{"t_ms": 1790044342550, "type": "key_down", "key": "backspace"}
+{"t_ms": 1790044342558, "type": "screenshot", "path": "screenshots/000017.png", "kind": "trigger"}
+{"t_ms": 1790044342560, "type": "key_up", "key": "backspace"}
+{"t_ms": 1790044342650, "type": "key_down", "key": "o"}
+{"t_ms": 1790044342658, "type": "screenshot", "path": "screenshots/000018.png", "kind": "trigger"}
+{"t_ms": 1790044342660, "type": "key_up", "key": "o"}
+{"t_ms": 1790044342800, "type": "key_down", "key": "enter"}
+{"t_ms": 1790044342808, "type": "screenshot", "path": "screenshots/000019.png", "kind": "trigger"}
+{"t_ms": 1790044342820, "type": "key_up", "key": "enter"}
+{"t_ms": 1790044343820, "type": "screenshot", "path": "screenshots/000020.png", "kind": "settle"}
+{"t_ms": 1790044344000, "type": "window_active", "title": "Windows PowerShell", "process": "powershell.exe"}
+{"t_ms": 1790044344100, "type": "key_down", "key": "d"}
+{"t_ms": 1790044344108, "type": "screenshot", "path": "screenshots/000021.png", "kind": "trigger"}
+{"t_ms": 1790044344110, "type": "key_up", "key": "d"}
+{"t_ms": 1790044344200, "type": "key_down", "key": "i"}
+{"t_ms": 1790044344208, "type": "screenshot", "path": "screenshots/000022.png", "kind": "trigger"}
+{"t_ms": 1790044344210, "type": "key_up", "key": "i"}
+{"t_ms": 1790044344300, "type": "key_down", "key": "r"}
+{"t_ms": 1790044344308, "type": "screenshot", "path": "screenshots/000023.png", "kind": "trigger"}
+{"t_ms": 1790044344310, "type": "key_up", "key": "r"}
+{"t_ms": 1790044344400, "type": "key_down", "key": "enter"}
+{"t_ms": 1790044344408, "type": "screenshot", "path": "screenshots/000024.png", "kind": "trigger"}
+{"t_ms": 1790044344420, "type": "key_up", "key": "enter"}
+{"t_ms": 1790044344600, "type": "process_event", "op": "exit", "name": "python.exe", "pid": 5555}
+{"t_ms": 1790044344700, "type": "file_event", "op": "renamed", "path": "C:/task/a.txt", "new_path": "C:/task/a_backup.txt"}
+{"t_ms": 1790044344750, "type": "file_event", "op": "deleted", "path": "C:/task/temp.tmp"}
+{"t_ms": 1790044344900, "type": "process_event", "op": "start", "name": "svchost.exe", "pid": 9999, "user": "SYSTEM"}
+{"t_ms": 1790044345420, "type": "screenshot", "path": "screenshots/000025.png", "kind": "settle"}
+{"t_ms": 1790044345450, "type": "mouse_down", "button": "left", "x": 960, "y": 1070}
+{"t_ms": 1790044345455, "type": "uia_query", "x": 960, "y": 1070, "target": {"name": "SOLIDWORKS - Part1.sldprt", "control_type": "Button", "automation_id": "Taskbar_SLDWORKS", "window": "Taskbar", "bounding_rect": [900, 1050, 1020, 1080]}}
+{"t_ms": 1790044345458, "type": "screenshot", "path": "screenshots/000026.png", "kind": "trigger"}
+{"t_ms": 1790044345480, "type": "mouse_up", "button": "left", "x": 960, "y": 1070}
+{"t_ms": 1790044345500, "type": "window_active", "title": "Part1 - SOLIDWORKS", "process": "SLDWORKS.exe"}
+{"t_ms": 1790044346050, "type": "mouse_down", "button": "left", "x": 900, "y": 500}
+{"t_ms": 1790044346055, "type": "uia_query", "x": 900, "y": 500, "target": {"name": "Rebuild", "control_type": "Button", "automation_id": "CommandManager_Rebuild", "window": "SOLIDWORKS", "bounding_rect": [870, 485, 930, 515]}}
+{"t_ms": 1790044346058, "type": "screenshot", "path": "screenshots/000027.png", "kind": "trigger"}
+{"t_ms": 1790044346150, "type": "mouse_up", "button": "left", "x": 900, "y": 500}
+{"t_ms": 1790044346600, "type": "file_event", "op": "modified", "path": "C:/task/Part1.sldprt", "size": 1049600}
+{"t_ms": 1790044347150, "type": "screenshot", "path": "screenshots/000028.png", "kind": "settle"}
+{"t_ms": 1790044348000, "type": "screenshot", "path": "screenshots/000029.png", "kind": "settle"}
+{"t_ms": 1790044348050, "type": "recording_end"}

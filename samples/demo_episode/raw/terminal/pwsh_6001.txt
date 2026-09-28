@@ -1,0 +1,36 @@
+**********************
+Windows PowerShell transcript start
+Start time: 20260922103224
+Username: WIN-VM\demo
+RunAs User: WIN-VM\demo
+Configuration Name:
+Machine: WIN-VM (Microsoft Windows NT 10.0.26100.0)
+Host Application: powershell.exe
+Process ID: 6001
+PSVersion: 5.1.26100.1
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.1
+BuildVersion: 10.0.26100.1
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is C:\ProgramData\trajrec\current\raw\terminal\pwsh_6001.txt
+PS C:\task> dir
+
+
+    目录: C:\task
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----         9/22/2026  10:32 AM          20480 a.txt
+-a----         9/22/2026  10:31 AM        1048576 Part1.sldprt
+
+
+PS C:\task>
+**********************
+Windows PowerShell transcript end
+End time: 20260922103224
+**********************

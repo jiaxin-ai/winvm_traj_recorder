@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>trajectory</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; background: #1e1f22; color: #e6e6e6; }
+  header { padding: 20px 24px; background: #26272b; border-bottom: 1px solid #333; }
+  header h2 { margin: 0 0 12px 0; }
+  .task-card h1 { margin: 0 0 6px 0; font-size: 20px; }
+  .task-card p { margin: 0 0 8px 0; color: #cfd2d6; }
+  #steps { padding: 12px 24px; }
+  details.step { border: 1px solid #333; border-radius: 6px; margin-bottom: 10px; background: #232427; }
+  details.step > summary { padding: 10px 14px; font-weight: 600; cursor: pointer; list-style: revert; }
+  details.step > summary:hover { background: #2a2b2f; }
+  .step-body { padding: 4px 16px 14px 16px; border-top: 1px solid #333; }
+  details.section { margin: 10px 0; border-left: 3px solid #3a3d42; padding-left: 10px; }
+  details.section > summary { font-weight: 600; cursor: pointer; color: #cfd2d6; padding: 4px 0; }
+  .section-body { padding: 4px 0 4px 4px; }
+  .section-body > details { margin: 8px 0; }
+  .section-body > details > summary { cursor: pointer; color: #9aa0a6; font-size: 13px; padding: 2px 0; }
+  .subhead { color: #9aa0a6; font-size: 12px; margin: 8px 0 2px 0; }
+  video { max-width: 720px; width: 100%; display: block; }
+  #recording { padding: 20px 24px; border-top: 1px solid #333; }
+  #recording h2 { margin: 0 0 12px 0; }
+  .shot-wrap { position: relative; display: inline-block; max-width: 640px; width: 100%; }
+  .shot-wrap img { width: 100%; display: block; border: 1px solid #444; }
+  .marker { position: absolute; width: 20px; height: 32px; background-image: url('data:image/png;base64,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'); background-size: contain; background-repeat: no-repeat; pointer-events: none; }
+  .rect { position: absolute; border: 2px solid #4ea1ff; background: rgba(78,161,255,0.15); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; background: #3a3d42; font-size: 12px; margin-right: 6px; }
+  pre { white-space: pre-wrap; word-break: break-all; background: #17181a; padding: 8px; border-radius: 4px; font-size: 12px; max-height: 200px; overflow: auto; margin: 0; }
+  .vtime { cursor: pointer; color: #4ea1ff; text-decoration: underline; }
+  table.kv { border-collapse: collapse; font-size: 12px; width: 100%; }
+  table.kv td { padding: 2px 6px; vertical-align: top; word-break: break-word; }
+  table.kv td.k { color: #9aa0a6; white-space: nowrap; width: 110px; }
+  .empty { color: #666; font-style: italic; margin: 2px 0; }
+  ul { margin: 4px 0; padding-left: 18px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h2>trajectory</h2>
+  <div class="task-card">
+  <h1>SOLIDWORKS 零件建模演示</h1>
+  <p>在 SOLIDWORKS 中对 Part1 执行拉伸凸台、重命名草图并保存,期间用 PowerShell 查看任务目录内容。</p>
+  
+</div>
+</header>
+<div id="steps">
+<details class="step">
+<summary>Step 0 · 2026-09-22T10:32:12.100+08:00 · mouse_click · <span class="vtime" onclick="event.preventDefault(); seek(0.05);">video 0.05s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000000.png" loading="lazy"></div></details>
+      <details open><summary>Window</summary><span class="badge">SLDWORKS.exe</span> Part1 - SOLIDWORKS</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>mouse_click</b></td></tr><tr><td class="k">button</td><td>&quot;left&quot;</td></tr><tr><td class="k">position</td><td>[812, 436]</td></tr></table><div class="subhead">UIA target</div><table class="kv"><tr><td class="k">name</td><td>Extruded Boss/Base</td></tr><tr><td class="k">control_type</td><td>Button</td></tr><tr><td class="k">automation_id</td><td>CommandManager_Extrude</td></tr><tr><td class="k">window</td><td>SOLIDWORKS</td></tr><tr><td class="k">bounding_rect</td><td>[780, 420, 860, 455]</td></tr></table><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000001.png" loading="lazy"><div class="marker" style="left:42.292%; top:40.370%;"></div><div class="rect" style="left:40.625%; top:38.889%; width:4.167%; height:3.241%;"></div></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><ul><li>[created] C:/task/a.txt (20480 bytes)</li></ul></details>
+      <details open><summary>Process events</summary><ul><li>[start] python.exe (pid 5555) — python helper.py</li></ul></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 1 · 2026-09-22T10:32:14.050+08:00 · mouse_drag · <span class="vtime" onclick="event.preventDefault(); seek(3.22);">video 3.22s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000002.png" loading="lazy"><div class="marker" style="left:42.344%; top:40.370%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">SLDWORKS.exe</span> Part1 - SOLIDWORKS</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>mouse_drag</b></td></tr><tr><td class="k">button</td><td>&quot;left&quot;</td></tr><tr><td class="k">start</td><td>[300, 300]</td></tr><tr><td class="k">end</td><td>[400, 380]</td></tr></table><div class="subhead">UIA target</div><p class="empty">无</p><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000003.png" loading="lazy"><div class="marker" style="left:15.625%; top:27.778%;"></div></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><p class="empty">无</p></details>
+      <details open><summary>Process events</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 2 · 2026-09-22T10:32:16.050+08:00 · mouse_double_click · <span class="vtime" onclick="event.preventDefault(); seek(5.4);">video 5.4s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000004.png" loading="lazy"><div class="marker" style="left:20.833%; top:35.185%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">SLDWORKS.exe</span> Part1 - SOLIDWORKS</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>mouse_double_click</b></td></tr><tr><td class="k">button</td><td>&quot;left&quot;</td></tr><tr><td class="k">position</td><td>[150, 220]</td></tr></table><div class="subhead">UIA target</div><table class="kv"><tr><td class="k">name</td><td>Sketch1</td></tr><tr><td class="k">control_type</td><td>TreeItem</td></tr><tr><td class="k">automation_id</td><td>FeatureTree_Sketch1</td></tr><tr><td class="k">window</td><td>SOLIDWORKS</td></tr><tr><td class="k">bounding_rect</td><td>[120, 210, 260, 235]</td></tr></table><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000005.png" loading="lazy"><div class="marker" style="left:7.812%; top:20.370%;"></div><div class="rect" style="left:6.250%; top:19.444%; width:7.292%; height:2.315%;"></div></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><p class="empty">无</p></details>
+      <details open><summary>Process events</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 3 · 2026-09-22T10:32:18.050+08:00 · scroll · <span class="vtime" onclick="event.preventDefault(); seek(7.3);">video 7.3s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000007.png" loading="lazy"><div class="marker" style="left:7.865%; top:20.463%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">SLDWORKS.exe</span> Part1 - SOLIDWORKS</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>scroll</b></td></tr><tr><td class="k">position</td><td>[500, 400]</td></tr><tr><td class="k">dx</td><td>0</td></tr><tr><td class="k">dy</td><td>-3</td></tr></table><div class="subhead">UIA target</div><p class="empty">无</p><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000008.png" loading="lazy"><div class="marker" style="left:26.042%; top:37.037%;"></div></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><p class="empty">无</p></details>
+      <details open><summary>Process events</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 4 · 2026-09-22T10:32:20.100+08:00 · hotkey · <span class="vtime" onclick="event.preventDefault(); seek(9.3);">video 9.3s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000009.png" loading="lazy"><div class="marker" style="left:26.042%; top:37.037%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">SLDWORKS.exe</span> Part1 - SOLIDWORKS</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>hotkey</b></td></tr><tr><td class="k">keys</td><td>[&quot;ctrl&quot;, &quot;s&quot;]</td></tr></table><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000010.png" loading="lazy"></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><ul><li>[modified] C:/task/Part1.sldprt (1048576 bytes)</li></ul></details>
+      <details open><summary>Process events</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 5 · 2026-09-22T10:32:22.050+08:00 · type_text · <span class="vtime" onclick="event.preventDefault(); seek(11.18);">video 11.18s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000011.png" loading="lazy"><div class="marker" style="left:26.042%; top:37.037%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">SLDWORKS.exe</span> Part1 - SOLIDWORKS</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>type_text</b></td></tr><tr><td class="k">text</td><td>&quot;hello&quot;</td></tr></table><div class="subhead">UIA target</div><table class="kv"><tr><td class="k">name</td><td>Sketch1</td></tr><tr><td class="k">control_type</td><td>Edit</td></tr><tr><td class="k">automation_id</td><td>FeatureTree_RenameBox</td></tr><tr><td class="k">window</td><td>SOLIDWORKS</td></tr><tr><td class="k">bounding_rect</td><td>[120, 210, 260, 235]</td></tr></table><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000012.png" loading="lazy"><div class="rect" style="left:6.250%; top:19.444%; width:7.292%; height:2.315%;"></div></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><p class="empty">无</p></details>
+      <details open><summary>Process events</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 6 · 2026-09-22T10:32:22.800+08:00 · key_press · <span class="vtime" onclick="event.preventDefault(); seek(11.18);">video 11.18s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000011.png" loading="lazy"><div class="marker" style="left:26.042%; top:37.037%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">SLDWORKS.exe</span> Part1 - SOLIDWORKS</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>key_press</b></td></tr><tr><td class="k">key</td><td>&quot;enter&quot;</td></tr></table><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000019.png" loading="lazy"></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><p class="empty">无</p></details>
+      <details open><summary>Process events</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 7 · 2026-09-22T10:32:24.400+08:00 · shell_command · <span class="vtime" onclick="event.preventDefault(); seek(13.82);">video 13.82s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000020.png" loading="lazy"><div class="marker" style="left:26.042%; top:37.037%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">SLDWORKS.exe</span> Part1 - SOLIDWORKS</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>shell_command</b></td></tr><tr><td class="k">command</td><td>&quot;dir&quot;</td></tr></table><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000024.png" loading="lazy"></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><ul><li>[renamed] C:/task/a.txt → C:/task/a_backup.txt</li><li>[deleted] C:/task/temp.tmp</li></ul></details>
+      <details open><summary>Process events</summary><ul><li>[exit] python.exe (pid 5555)</li></ul></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 8 · 2026-09-22T10:32:25.450+08:00 · mouse_click · <span class="vtime" onclick="event.preventDefault(); seek(15.42);">video 15.42s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000025.png" loading="lazy"><div class="marker" style="left:26.042%; top:37.037%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">powershell.exe</span> Windows PowerShell</details>
+      <details open><summary>Terminal</summary><pre>    目录: C:\task
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----         9/22/2026  10:32 AM          20480 a.txt
+-a----         9/22/2026  10:31 AM        1048576 Part1.sldprt</pre></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>mouse_click</b></td></tr><tr><td class="k">button</td><td>&quot;left&quot;</td></tr><tr><td class="k">position</td><td>[960, 1070]</td></tr></table><div class="subhead">UIA target</div><table class="kv"><tr><td class="k">name</td><td>SOLIDWORKS - Part1.sldprt</td></tr><tr><td class="k">control_type</td><td>Button</td></tr><tr><td class="k">automation_id</td><td>Taskbar_SLDWORKS</td></tr><tr><td class="k">window</td><td>Taskbar</td></tr><tr><td class="k">bounding_rect</td><td>[900, 1050, 1020, 1080]</td></tr></table><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000026.png" loading="lazy"><div class="marker" style="left:50.000%; top:99.074%;"></div><div class="rect" style="left:46.875%; top:97.222%; width:6.250%; height:2.778%;"></div></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><p class="empty">无</p></details>
+      <details open><summary>Process events</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 9 · 2026-09-22T10:32:26.050+08:00 · mouse_click · <span class="vtime" onclick="event.preventDefault(); seek(15.42);">video 15.42s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000025.png" loading="lazy"><div class="marker" style="left:26.042%; top:37.037%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">powershell.exe</span> Windows PowerShell</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><table class="kv"><tr><td class="k">type</td><td><b>mouse_click</b></td></tr><tr><td class="k">button</td><td>&quot;left&quot;</td></tr><tr><td class="k">position</td><td>[900, 500]</td></tr></table><div class="subhead">UIA target</div><table class="kv"><tr><td class="k">name</td><td>Rebuild</td></tr><tr><td class="k">control_type</td><td>Button</td></tr><tr><td class="k">automation_id</td><td>CommandManager_Rebuild</td></tr><tr><td class="k">window</td><td>SOLIDWORKS</td></tr><tr><td class="k">bounding_rect</td><td>[870, 485, 930, 515]</td></tr></table><div class="subhead">Screenshot(动作触发瞬间)</div><div class="shot-wrap"><img src="screenshots/000027.png" loading="lazy"><div class="marker" style="left:46.875%; top:46.296%;"></div><div class="rect" style="left:45.312%; top:44.907%; width:3.125%; height:2.778%;"></div></div></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><ul><li>[modified] C:/task/Part1.sldprt (1049600 bytes)</li></ul></details>
+      <details open><summary>Process events</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+</div>
+</details>
+<details class="step">
+<summary>Step 10 · 2026-09-22T10:32:28.050+08:00 · 结束 · <span class="vtime" onclick="event.preventDefault(); seek(18.0);">video 18.0s</span></summary>
+<div class="step-body">
+  <details class="section" open>
+    <summary>Observation</summary>
+    <div class="section-body">
+      <details open><summary>Screenshot</summary><div class="shot-wrap"><img src="screenshots/000029.png" loading="lazy"><div class="marker" style="left:46.875%; top:46.296%;"></div></div></details>
+      <details open><summary>Window</summary><span class="badge">SLDWORKS.exe</span> Part1 - SOLIDWORKS</details>
+      <details open><summary>Terminal</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+  <details class="section" open>
+    <summary>Action</summary>
+    <div class="section-body"><p class="empty">(结束,无动作)</p></div>
+  </details>
+  <details class="section" open>
+    <summary>Events</summary>
+    <div class="section-body">
+      <details open><summary>File events</summary><ul><li>[modified] C:/task/Part1.sldprt (1049600 bytes)</li></ul></details>
+      <details open><summary>Process events</summary><p class="empty">无</p></details>
+    </div>
+  </details>
+</div>
+</details>
+</div>
+<section id="recording">
+  <h2>Recording</h2>
+  <p class="empty">recording.mp4 not found</p>
+</section>
+<script>
+function seek(t) {
+  const v = document.getElementById('video');
+  if (!v) return;
+  v.currentTime = t;
+  v.play();
+  v.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+</script>
+</body>
+</html>

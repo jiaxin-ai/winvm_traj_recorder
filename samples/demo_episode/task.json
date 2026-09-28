@@ -1,0 +1,4 @@
+{
+  "title": "SOLIDWORKS 零件建模演示",
+  "task_instruction": "在 SOLIDWORKS 中对 Part1 执行拉伸凸台、重命名草图并保存,期间用 PowerShell 查看任务目录内容。"
+}

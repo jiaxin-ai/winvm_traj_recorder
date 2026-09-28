@@ -7,7 +7,7 @@ Creates output/<episode_id>/ (episode_id defaults to the start time), starts
 every collection module, records the initial observation, then waits for
 Ctrl+C or the C:\\ProgramData\\trajrec\\STOP file. On stop it shuts every
 module down cleanly, copies changed files from --watch into artifacts/, and
-calls trajectory.py to build traj/trajectory.jsonl / traj/trajectory.html.
+calls trajectory.py to build trajectory.jsonl / trajectory.html.
 
 See README.md for what is and isn't verified on real Windows.
 """
@@ -276,7 +276,7 @@ def main():
     episode.stop()
     copy_artifacts(episode_dir, args.watch)
 
-    print("[trajrec] 生成 traj/trajectory.jsonl / traj/trajectory.html ...")
+    print("[trajrec] 生成 trajectory.jsonl / trajectory.html ...")
     trajectory.generate(episode_dir)
     print(f"[trajrec] 完成: {episode_dir}")
 

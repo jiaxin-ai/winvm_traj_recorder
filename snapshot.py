@@ -435,7 +435,7 @@ def main():
         (episode_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"[snapshot] 已结束,repo.bundle 已生成。可以运行:\n"
               f"    python trajectory.py {episode_dir}\n"
-              f"    python restore.py {episode_dir} --list")
+              f"    python restore.py {episode_dir / 'snapshots'} --list")
 
 
 if __name__ == "__main__":

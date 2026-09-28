@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Restore or export a file snapshot from a recorded episode.
 
-    python restore.py <episode_dir> --list
-    python restore.py <episode_dir> --step 12 --export D:\\check       (default, safe)
-    python restore.py <episode_dir> --step 12 --in-place
-    python restore.py <episode_dir> --step 12 --in-place --kill
+    python restore.py <episode_dir>\\snapshots --list
+    python restore.py <episode_dir>\\snapshots --step 12 --export D:\\check       (default, safe)
+    python restore.py <episode_dir>\\snapshots --step 12 --in-place
+    python restore.py <episode_dir>\\snapshots --step 12 --in-place --kill
 
---commit <hash> works in place of --step. The work directory path is read
-from snapshots/index.json's work_dir field; override with --work-dir if the
-episode data was copied to another machine.
+The argument is the episode's snapshots/ directory itself (the one holding
+repo.git and index.json), not the episode directory. --step looks up
+trajectory.jsonl next to it (i.e. in the parent, the episode directory) to
+find that step's file_ckpt; --commit works in place of --step and doesn't
+need trajectory.jsonl at all. The work directory path is read from
+index.json's work_dir field; override with --work-dir if the episode data
+was copied to another machine.
 
 Export mode only reads git objects (via `git archive`) and never touches
 the work directory -- it works on any machine. In-place mode overwrites the
@@ -42,16 +46,16 @@ SOFTWARE_PROCESS_NAMES = [
 TZ = timezone(timedelta(hours=8))
 
 
-def load_index(episode_dir):
-    path = Path(episode_dir) / "snapshots" / "index.json"
+def load_index(snapshots_dir):
+    path = Path(snapshots_dir) / "index.json"
     if not path.exists():
-        print(f"[restore] 找不到 {path},该 episode 可能未启用快照功能", file=sys.stderr)
+        print(f"[restore] 找不到 {path},确认传的是 snapshots 目录,且该 episode 启用了快照功能", file=sys.stderr)
         sys.exit(1)
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_trajectory_steps(episode_dir):
-    path = Path(episode_dir) / "traj" / "trajectory.jsonl"
+    path = Path(episode_dir) / "trajectory.jsonl"
     steps = []
     if not path.exists():
         return steps
@@ -217,7 +221,7 @@ def restore_in_place(git_dir, work_dir, commit, kill):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("episode_dir", help="episode 目录,如 output/20260922_103215")
+    parser.add_argument("snapshots_dir", help="episode 的 snapshots 目录,如 output/20260922_103215/snapshots")
     parser.add_argument("--list", action="store_true", help="列出所有版本")
     parser.add_argument("--step", type=int, help="按 step_id 定位版本")
     parser.add_argument("--commit", help="按 commit hash 定位版本(可代替 --step)")
@@ -228,12 +232,13 @@ def main():
     parser.add_argument("--work-dir", help="覆盖 index.json 里记录的工作目录路径(episode 数据被拷到别的机器时需要)")
     args = parser.parse_args()
 
-    episode_dir = Path(args.episode_dir)
-    if not episode_dir.exists():
-        print(f"[restore] episode 目录不存在: {episode_dir}", file=sys.stderr)
+    snapshots_dir = Path(args.snapshots_dir)
+    if not snapshots_dir.exists():
+        print(f"[restore] snapshots 目录不存在: {snapshots_dir}", file=sys.stderr)
         sys.exit(1)
+    episode_dir = snapshots_dir.parent  # trajectory.jsonl and the default --export target live here
 
-    index = load_index(episode_dir)
+    index = load_index(snapshots_dir)
 
     if args.list:
         list_checkpoints(index)
@@ -244,7 +249,7 @@ def main():
         print("[restore] index.json 里没有 work_dir,请用 --work-dir 指定", file=sys.stderr)
         sys.exit(1)
     work_dir = Path(work_dir)
-    git_dir = episode_dir / "snapshots" / "repo.git"
+    git_dir = snapshots_dir / "repo.git"
     if not git_dir.exists():
         print(f"[restore] 找不到仓库: {git_dir}", file=sys.stderr)
         sys.exit(1)

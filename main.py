@@ -12,6 +12,7 @@ calls trajectory.py to build trajectory.jsonl / trajectory.html.
 See README.md for what is and isn't verified on real Windows.
 """
 import argparse
+import json
 import shutil
 import sys
 import time
@@ -31,6 +32,7 @@ import files
 import input_recorder
 import processes
 import screen
+import snapshot
 import terminal
 import trajectory
 import window
@@ -53,18 +55,43 @@ def copy_task_file(task_path, episode_dir):
     shutil.copyfile(task_path, episode_dir / "task.json")
 
 
+def check_watch_output_nesting(output_root, watch_dir):
+    """task-v1.1.md: if --output sits inside --watch, snapshot commits
+    would capture the trajectory's own output as it's written. Fail fast
+    instead of silently corrupting the recording."""
+    output_abs = Path(output_root).resolve()
+    watch_abs = Path(watch_dir).resolve()
+    if _is_relative_to(output_abs, watch_abs):
+        print(f"[trajrec] 错误: --output ({output_abs}) 位于 --watch ({watch_abs}) 之内,"
+              f"轨迹数据会被写进快照,请把 --output 放到 --watch 目录之外", file=sys.stderr)
+        sys.exit(1)
+
+
+def write_meta(episode_dir, watch_dir, snapshot_mgr):
+    meta = {
+        "watch_dir": str(Path(watch_dir).resolve()),
+        "snapshot": {"enabled": snapshot_mgr.enabled, "reason": snapshot_mgr.disabled_reason},
+    }
+    (Path(episode_dir) / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 class Episode:
     """Owns every collection module's lifecycle for one recording."""
 
-    def __init__(self, episode_dir, watch_dir):
+    def __init__(self, episode_dir, watch_dir, snapshot_enabled=True):
         self.episode_dir = Path(episode_dir)
         self.watch_dir = watch_dir
         self.writer = input_recorder.JsonlWriter(self.episode_dir / "raw" / "events.jsonl")
+        self.snapshot_mgr = snapshot.SnapshotManager(
+            self.episode_dir, Path(watch_dir), self.writer, enabled=snapshot_enabled)
+        self.snapshot_mgr.init_repo()  # resolved eagerly so main() can write meta.json before start()
         self.recorder = screen.Recorder()
         self.input_rec = input_recorder.InputRecorder(
             self.writer,
             screenshot_dir=self.episode_dir / "screenshots",
             take_screenshot=screen.take_screenshot,
+            on_milestone=lambda t_ms: self.snapshot_mgr.notify_milestone(None, t_ms),
         )
         self._window_stop = None
         self._process_stop = None
@@ -98,6 +125,8 @@ class Episode:
         self._process_thread.start()
 
         self._file_observer = files.start_watch(self.watch_dir, self._on_file)
+        if self.snapshot_mgr.enabled:
+            self.snapshot_mgr.start(self._file_observer)
 
         terminal.set_current_episode(self.episode_dir / "raw" / "terminal")
 
@@ -130,7 +159,10 @@ class Episode:
         self._write({"t_ms": input_recorder.now_ms(), "type": "process_event", **event})
 
     def _on_file(self, event):
-        self._write({"t_ms": input_recorder.now_ms(), "type": "file_event", **event})
+        t_ms = input_recorder.now_ms()
+        self._write({"t_ms": t_ms, "type": "file_event", **event})
+        if self.snapshot_mgr.enabled:
+            self.snapshot_mgr.notify_file_changed(t_ms)
 
     def stop(self):
         self.input_rec.stop()
@@ -141,6 +173,8 @@ class Episode:
         if self._file_observer:
             self._file_observer.stop()
             self._file_observer.join()
+        if self.snapshot_mgr.enabled:
+            self.snapshot_mgr.finalize()
 
         # final screenshot + window state before closing the recording
         final_idx = self.input_rec.next_screenshot_index()
@@ -215,17 +249,26 @@ def main():
     parser.add_argument("--output", required=True, help="输出根目录,如 C:\\traj")
     parser.add_argument("--task", required=True, help="task.json 文件路径")
     parser.add_argument("--watch", required=True, help="文件监控目录,如 C:\\task")
+    parser.add_argument("--snapshot", dest="snapshot", action="store_true", default=True,
+                         help="启用文件快照(默认开启)")
+    parser.add_argument("--no-snapshot", dest="snapshot", action="store_false",
+                         help="关闭文件快照功能")
     args = parser.parse_args()
 
     if sys.platform != "win32":
         print("main.py 只能在 Windows 上运行(依赖 pynput/uiautomation/pywin32/mss/watchdog)")
         sys.exit(1)
 
+    check_watch_output_nesting(args.output, args.watch)
+
     episode_dir = make_episode_dir(args.output)
     copy_task_file(args.task, episode_dir)
     print(f"[trajrec] episode 目录: {episode_dir}")
 
-    episode = Episode(episode_dir, args.watch)
+    episode = Episode(episode_dir, args.watch, snapshot_enabled=args.snapshot)
+    write_meta(episode_dir, args.watch, episode.snapshot_mgr)
+    if not episode.snapshot_mgr.enabled:
+        print(f"[trajrec] 文件快照未启用: {episode.snapshot_mgr.disabled_reason}")
     episode.start()
 
     wait_for_stop()

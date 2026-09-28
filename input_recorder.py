@@ -62,6 +62,18 @@ TYPE_BURST_GAP_MS = 1500
 SETTLE_DELAY_MS = 1000  # how long input must be quiet before we treat the UI as "settled" and take a screenshot
 SCROLL_BURST_GAP_MS = 400  # matches trajectory.py's SCROLL_MERGE_GAP_MS; only the first tick of a burst gets a "trigger" shot
 
+# Raw Win32 keyboard message constants, used by InputRecorder's
+# win32_event_filter to genuinely suppress Ctrl+Alt+Shift+M (task-v1.1.md)
+# rather than just skip recording it. Hardcoded rather than importing
+# win32con for four well-known values.
+_WM_KEYDOWN = 0x0100
+_WM_KEYUP = 0x0101
+_WM_SYSKEYDOWN = 0x0104
+_WM_SYSKEYUP = 0x0105
+_VK_M = ord("M")
+
+TOAST_DURATION_MS = 1500
+
 # pynput key -> task.md's lowercase key name convention
 _SPECIAL_KEY_NAMES = {
     "enter": "enter", "tab": "tab", "esc": "esc", "space": "space",
@@ -105,15 +117,50 @@ def now_ms():
     return int(time.time() * 1000)
 
 
+def _show_toast(text, duration_ms=TOAST_DURATION_MS):
+    """Briefly shows `text` in a small topmost, borderless window in the
+    screen's bottom-right corner, so the person recording knows the
+    milestone hotkey actually fired. Runs on its own throwaway thread
+    (tkinter needs its own mainloop) so it can never block the keyboard
+    hook. Uses only the stdlib so this doesn't add a new dependency."""
+
+    def _run():
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.overrideredirect(True)
+            root.attributes("-topmost", True)
+            try:
+                root.attributes("-alpha", 0.9)
+            except Exception:
+                pass
+            label = tk.Label(root, text=text, bg="#222222", fg="#ffffff",
+                              font=("Segoe UI", 11), padx=16, pady=8)
+            label.pack()
+            root.update_idletasks()
+            screen_w = root.winfo_screenwidth()
+            screen_h = root.winfo_screenheight()
+            w = root.winfo_width()
+            h = root.winfo_height()
+            root.geometry(f"+{screen_w - w - 20}+{screen_h - h - 60}")
+            root.after(duration_ms, root.destroy)
+            root.mainloop()
+        except Exception as exc:
+            print(f"[input_recorder] toast 显示失败: {exc}", file=sys.stderr)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 class InputRecorder:
     """Owns the mouse/keyboard hooks and the background worker for
     UIA/screenshot side work. Call start()/stop()."""
 
-    def __init__(self, writer, screenshot_dir=None, take_screenshot=None, on_event=None):
+    def __init__(self, writer, screenshot_dir=None, take_screenshot=None, on_event=None, on_milestone=None):
         self._writer = writer
         self._screenshot_dir = Path(screenshot_dir) if screenshot_dir else None
         self._take_screenshot = take_screenshot  # callable(path) -> None; injected so this module doesn't hard-depend on screen.py's mss usage
         self._on_event = on_event  # optional callback(event) for standalone/testing output
+        self._on_milestone = on_milestone  # optional callable(t_ms) -> None, wired by main.py to snapshot.py
         self._shot_q = queue.Queue()
         self._uia_q = queue.Queue()
         self._shot_worker_thread = None
@@ -127,6 +174,8 @@ class InputRecorder:
         self._mouse_listener = None
         self._keyboard_listener = None
         self._enabled = threading.Event()  # gate: ignore input until main.py says "ready"
+        self._mods = set()  # currently-held modifiers among {"ctrl", "alt", "shift"}, for the milestone hotkey
+        self._milestone_suppressed = False  # True between a suppressed M key-down and its matching key-up
 
     # -- public control -----------------------------------------------
     def start(self):
@@ -135,7 +184,15 @@ class InputRecorder:
         self._shot_worker_thread.start()
         self._uia_worker_thread.start()
         self._mouse_listener = mouse.Listener(on_click=self._on_click, on_scroll=self._on_scroll)
-        self._keyboard_listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
+        kb_kwargs = {"on_press": self._on_press, "on_release": self._on_release}
+        if sys.platform == "win32":
+            # win32_event_filter is pynput's mechanism for actually blocking
+            # a key from reaching the foreground app (via suppress_event()),
+            # as opposed to on_press/on_release which only decide whether to
+            # *record* it -- task-v1.1.md requires the former for the
+            # milestone hotkey so it can't trigger e.g. a SolidWorks command.
+            kb_kwargs["win32_event_filter"] = self._kb_filter
+        self._keyboard_listener = keyboard.Listener(**kb_kwargs)
         self._mouse_listener.start()
         self._keyboard_listener.start()
 
@@ -233,10 +290,37 @@ class InputRecorder:
         self._touch_activity()
 
     # -- keyboard ------------------------------------------------------
+    def _kb_filter(self, msg, data):
+        """pynput's win32-only hook filter, called synchronously on the
+        hook thread for every raw key message -- before on_press/on_release
+        even run. Must stay cheap. Detects Ctrl+Alt+Shift+M and calls
+        suppress_event() so the keystroke never reaches the foreground
+        app; the actual milestone trigger + toast happen afterward in
+        _on_press, off this thread, once the (still-fast) on_press callback
+        fires as usual."""
+        if not self._enabled.is_set():
+            return
+        vk = getattr(data, "vkCode", None)
+        if msg in (_WM_KEYDOWN, _WM_SYSKEYDOWN) and vk == _VK_M and {"ctrl", "alt", "shift"} <= self._mods:
+            self._milestone_suppressed = True
+            self._keyboard_listener.suppress_event()
+        elif msg in (_WM_KEYUP, _WM_SYSKEYUP) and vk == _VK_M and self._milestone_suppressed:
+            # Also suppress the matching key-up, even if a modifier was
+            # released first (holding order isn't guaranteed).
+            self._keyboard_listener.suppress_event()
+
     def _on_press(self, key):
         if not self._enabled.is_set():
             return
         name = key_to_name(key)
+        if name in ("ctrl", "alt", "shift"):
+            self._mods.add(name)
+        if name == "m" and self._milestone_suppressed:
+            # The down-half of a suppressed Ctrl+Alt+Shift+M: never enters
+            # the trajectory (task-v1.1.md) -- triggers the milestone
+            # instead of the normal key_down/screenshot/UIA handling below.
+            self._trigger_milestone()
+            return
         t_ms = now_ms()
         is_new_burst = self._last_key_t_ms is None or (t_ms - self._last_key_t_ms) > TYPE_BURST_GAP_MS
         self._last_key_t_ms = t_ms
@@ -258,8 +342,22 @@ class InputRecorder:
     def _on_release(self, key):
         if not self._enabled.is_set():
             return
-        self._emit({"type": "key_up", "key": key_to_name(key)})
+        name = key_to_name(key)
+        if name == "m" and self._milestone_suppressed:
+            self._milestone_suppressed = False
+            return
+        if name in ("ctrl", "alt", "shift"):
+            self._mods.discard(name)
+        self._emit({"type": "key_up", "key": name})
         self._touch_activity()
+
+    def _trigger_milestone(self):
+        if self._on_milestone:
+            try:
+                self._on_milestone(now_ms())
+            except Exception as exc:
+                print(f"[input_recorder] on_milestone 回调出错: {exc}", file=sys.stderr)
+        _show_toast("已记录检查点")
 
     # -- background workers ----------------------------------------------
     def _shot_worker_loop(self):

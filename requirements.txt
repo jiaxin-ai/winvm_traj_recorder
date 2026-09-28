@@ -13,3 +13,7 @@ watchdog
 
 # ffmpeg itself is NOT a pip package — install it separately on the VM and
 # make sure it's on PATH (see README.md). screen.py just shells out to it.
+
+# V1.1 (file snapshots): no new pip dependencies. snapshot.py/restore.py
+# shell out to the `git` CLI (install separately, make sure it's on PATH)
+# and use only stdlib (subprocess/tarfile/tkinter for the milestone toast).

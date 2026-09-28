@@ -491,7 +491,7 @@ def _first_screenshot_at_or_after(screenshots, t_ms):
     return None
 
 
-def build_steps(raw_events, transcript_commands):
+def build_steps(raw_events, transcript_commands, snapshot_events=None, snapshot_enabled=False):
     window_events = [e for e in raw_events if e["type"] == "window_active"]
     all_screenshots = [e for e in raw_events if e["type"] == "screenshot"]
     # Screenshots written before this field existed are treated as
@@ -619,7 +619,73 @@ def build_steps(raw_events, transcript_commands):
     for s in steps:
         s["timestamp"] = datetime.fromtimestamp(s["t_ms"] / 1000, tz=TZ).isoformat(timespec="milliseconds")
 
+    _assign_snapshots(steps, snapshot_events or [], snapshot_enabled)
+
     return steps
+
+
+# --------------------------------------------------------------------------
+# snapshot field (task-v1.1.md)
+# --------------------------------------------------------------------------
+
+def _step_id_for_t_ms(steps, t_ms):
+    """The step whose window [step.t_ms, next_step.t_ms) contains t_ms.
+    A t_ms before the first step's own t_ms (e.g. the episode_start
+    snapshot, committed before the first user action) still resolves to
+    step 0 -- there's nothing earlier for it to belong to."""
+    if not steps:
+        return None
+    result = steps[0]["step_id"]
+    for s in steps:
+        if s["t_ms"] <= t_ms:
+            result = s["step_id"]
+        else:
+            break
+    return result
+
+
+def _assign_snapshots(steps, snapshot_events, snapshot_enabled):
+    """Sets each step's `snapshot` field per task-v1.1.md section 3: None
+    outright when the feature was off; otherwise the file_ckpt of the last
+    snapshot event whose requested_t_ms falls in that step's window,
+    carried forward from the previous step when its own window has none."""
+    if not snapshot_enabled:
+        for s in steps:
+            s["snapshot"] = None
+        return
+
+    last_event_by_step = {}
+    for e in sorted(snapshot_events, key=lambda ev: ev["requested_t_ms"]):
+        sid = _step_id_for_t_ms(steps, e["requested_t_ms"])
+        if sid is not None:
+            last_event_by_step[sid] = e  # later events win -- "窗口内有多个时取最后一个"
+
+    carry = None
+    for s in steps:
+        if s["step_id"] in last_event_by_step:
+            carry = last_event_by_step[s["step_id"]]
+        s["snapshot"] = {
+            "file_ckpt": carry["commit"] if carry else None,
+            "name": carry["name"] if carry else None,
+            "vm_ckpt": None,
+        }
+
+
+def build_snapshot_index(steps, snapshot_events, watch_dir, snapshot_enabled):
+    """Builds the structure written to snapshots/index.json: every commit
+    that was actually made, each tagged with the step it falls under."""
+    checkpoints = []
+    for e in sorted(snapshot_events, key=lambda ev: ev["requested_t_ms"]):
+        checkpoints.append({
+            "commit": e["commit"],
+            "requested_t_ms": e["requested_t_ms"],
+            "committed_t_ms": e["committed_t_ms"],
+            "reason": e["reason"],
+            "name": e["name"],
+            "step_id": _step_id_for_t_ms(steps, e["requested_t_ms"]),
+            "files_changed": e["files_changed"],
+        })
+    return {"work_dir": watch_dir, "enabled": snapshot_enabled, "checkpoints": checkpoints}
 
 
 # --------------------------------------------------------------------------
@@ -947,16 +1013,40 @@ function seek(t) {{
 # entry point
 # --------------------------------------------------------------------------
 
+def _load_meta(episode_dir: Path):
+    path = episode_dir / "meta.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def generate(episode_dir: Path):
+    episode_dir = Path(episode_dir)
     raw_dir = episode_dir / "raw"
     raw_events = load_raw_events(raw_dir)
     transcript_commands = parse_transcripts(raw_dir / "terminal")
-    steps = build_steps(raw_events, transcript_commands)
+
+    meta = _load_meta(episode_dir)
+    snapshot_meta = meta.get("snapshot") or {}
+    snapshot_enabled = bool(snapshot_meta.get("enabled"))
+    watch_dir = meta.get("watch_dir")
+    snapshot_events = [e for e in raw_events if e["type"] == "snapshot"]
+
+    steps = build_steps(raw_events, transcript_commands, snapshot_events, snapshot_enabled)
 
     out_path = episode_dir / "trajectory.jsonl"
     with out_path.open("w", encoding="utf-8") as f:
         for s in steps:
             f.write(json.dumps(s, ensure_ascii=False) + "\n")
+
+    index = build_snapshot_index(steps, snapshot_events, watch_dir, snapshot_enabled)
+    snapshots_dir = episode_dir / "snapshots"
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+    (snapshots_dir / "index.json").write_text(
+        json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
 
     render_html(steps, episode_dir)
     return steps

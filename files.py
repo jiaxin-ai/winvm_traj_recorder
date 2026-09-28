@@ -23,27 +23,39 @@ if sys.platform == "win32":
 def start_watch(watch_dir, callback):
     """Watches watch_dir recursively; calls callback(event) for each change,
     where event is {"op", "path", "new_path"?, "size"?}. Returns the
-    watchdog Observer (call .stop() + .join() to shut it down)."""
+    watchdog Observer (call .stop() + .join() to shut it down).
+
+    The returned Observer also carries a `last_event_ms` attribute (int ms,
+    None until the first event), updated on every change before the
+    callback runs. snapshot.py polls this to detect when the watched
+    directory has gone quiet, without needing its own separate watcher."""
+
+    observer = Observer()
+    observer.last_event_ms = None
 
     class Handler(FileSystemEventHandler):
         def on_created(self, event):
             if event.is_directory:
                 return
+            observer.last_event_ms = _now_ms()
             callback({"op": "created", "path": event.src_path, "size": _safe_size(event.src_path)})
 
         def on_modified(self, event):
             if event.is_directory:
                 return
+            observer.last_event_ms = _now_ms()
             callback({"op": "modified", "path": event.src_path, "size": _safe_size(event.src_path)})
 
         def on_deleted(self, event):
             if event.is_directory:
                 return
+            observer.last_event_ms = _now_ms()
             callback({"op": "deleted", "path": event.src_path})
 
         def on_moved(self, event):
             if event.is_directory:
                 return
+            observer.last_event_ms = _now_ms()
             callback({"op": "renamed", "path": event.src_path, "new_path": event.dest_path,
                       "size": _safe_size(event.dest_path)})
 
@@ -53,10 +65,13 @@ def start_watch(watch_dir, callback):
         except OSError:
             return None
 
-    observer = Observer()
     observer.schedule(Handler(), str(watch_dir), recursive=True)
     observer.start()
     return observer
+
+
+def _now_ms():
+    return int(time.time() * 1000)
 
 
 def main():

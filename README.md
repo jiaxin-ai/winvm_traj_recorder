@@ -175,7 +175,7 @@ python restore.py <episode_dir>\snapshots --step 12 --in-place --kill       # �
 
 ## 软件适配器(V1.2)
 
-适配器是别人按 [适配器规范](adapters/software_trajectory_collector_specification.md) 写的 Python 模块,连接某个专业软件(AutoCAD、SolidWorks……),在轨迹里补充软件内部的状态、命令和结果。本版只做 Recorder 一侧的接入点和一个 mock 适配器;没有适配器时行为与 V1.1 完全一致。
+适配器是别人按 [适配器规范](adapters/software_trajectory_collector_specification.md) 写的 Python 模块,连接某个专业软件(AutoCAD、SolidWorks……),在轨迹里补充软件内部的状态、命令和结果。本版只做 Recorder 一侧的接入点和一个 mock 适配器;没有适配器时采集行为与 V1.1 完全一致,轨迹里只多三个值为 `null` 的字段。
 
 ### 放置与启用
 
@@ -189,7 +189,7 @@ adapters/<目录名>/
 
 ```powershell
 python main.py ... --adapters auto          # 默认:加载全部适配器(mock 除外),前台进程匹配到 PROCESS_NAMES 时自动连接
-python main.py ... --adapters none          # 完全禁用,输出与 V1.1 一致(只多三个 null/[] 字段)
+python main.py ... --adapters none          # 完全禁用,raw/ 与 V1.1 一致;轨迹只多三个 null 字段
 python main.py ... --adapters mock,autocad  # 只加载这几个(adapters/ 下的目录名,不区分大小写)
 ```
 
@@ -227,17 +227,21 @@ raw/
               "timeouts": 0, "errors": 0, "disabled": false, "process_names": ["notepad.exe"]}]
 ```
 
-### 轨迹里的三个新字段
+### 轨迹里的新内容
 
-| 字段 | 含义 | 什么时候为 null / 空 |
+每个 step 都有三个固定字段,**没有内容时一律是 `null`**(不是空列表,也不会省略):
+
+| 字段 | 含义 | 什么时候为 `null` |
 |---|---|---|
-| `observation.software_state` | 与本 step observation 截图时刻**最接近**的一条 state 记录,且只取**截图那一刻前台进程**对应适配器的记录 | 没有适配器、前台不是被适配的软件、软件已关闭、`get_state` 超时、或最接近的一条相差超过 3 s → `null` |
-| `action.software_actions` | `t_ms` 落在 `[T - 300ms, T_next)` 的全部 action 记录,按 `t_ms` 升序;保留所有适配器的记录,每条自带 `software` 字段 | 这段时间没有记录 → `[]`;最后一个 step 的 action 本身是 `null`,所以没有这个字段 |
-| `events.software` | `t_ms` 落在 `[T, T_next)` 的全部 event 记录,按 `t_ms` 升序;同样保留所有适配器的 | 这段时间没有记录 → `[]` |
+| `observation.software_state` | 与本 step observation 截图时刻**最接近**的一条 state 记录,且只取**截图那一刻前台进程**对应适配器的记录 | 没有适配器、前台不是被适配的软件、软件已关闭、`get_state` 超时、或最接近的一条相差超过 3 s |
+| `action.software_actions` | `t_ms` 落在 `[T - 300ms, T_next)` 的全部 action 记录,按 `t_ms` 升序;保留所有适配器的记录,每条自带 `software` 字段 | 这段时间没有记录;最后一个 step 的 `action` 本身是 `null`,所以没有这个字段 |
+| `events.software` | `t_ms` 落在 `[T, T_next)` 的全部 event 记录,按 `t_ms` 升序;同样保留所有适配器的 | 这段时间没有记录 |
 
 `T` 是本 step 动作开始时刻,`T_next` 是下一 step 的;最后一个 step 的窗口开到录制结束。step 0 的窗口从录制开始算(和已有的 files/processes 事件一致),所以 attach 后、第一个动作前产生的记录不会丢。
 
-`trajectory.html` 里:Observation 下多一个 "Software state",Action 下多一个 "Software actions",Events 下多一个 "Software events";**为空时整个区块不显示**。每个 step 最多显示 50 条记录(`trajectory.jsonl` 里是全部)。
+`trajectory.html` 顶部(任务卡片下面)列出"监视的软件"(名称、进程名、是否连接过/已停用,取自 `meta.json` 的 `adapters`;没有则显示 `null`),`trajectory.jsonl` 里不记录这份清单,保持每行一个 step;每个 step 里 Observation 下的 "Software state"、Action 下的 "Software actions"、Events 下的 "Software events" **始终显示**,没有内容就显示 `null`(最后一个 step 没有 action,"Software actions" 也显示 `null`)。每个 step 最多显示 50 条记录(`trajectory.jsonl` 里是全部)。
+
+**mock 的 actions/events 看上去是一串 `MOCK_COMMAND {"seq": N}`,这是正常的**:mock 并不读取记事本里发生了什么,Recorder 每调用一次 `get_actions()`/`get_events()` 它就现场造一条记录,而每次按键按下/松开都会触发一次调用。所以在记事本里打 `aaabbb` 会得到十几条 seq 递增的记录——它们只证明"调用链路通、时间归属对",不代表任何真实操作。真适配器返回的会是 `EXTRUDE`、`object_created` 这类真实命令和结果。
 
 ### mock 适配器与故障注入
 
@@ -290,7 +294,7 @@ $env:MOCK_FAULT = "crash"; python main.py --output C:\traj --task task.json --wa
   - 真实录制下的时序:键鼠钩子线程、截图线程调 `notify_*()` 后是否确实没有可感知的延迟;`MOCK_FAULT=slow/crash/flood` 下录制是否无卡顿(验收第 8–10 条)。
   - 在真实 `main.py` 流程里跑出的 `meta.json`、`raw/software_*.jsonl`、HTML 区块(验收第 1–6 条)。
   - 真适配器的 COM 线程要求:所有方法确实都在同一线程调用(代码保证),但没有真的 COM 适配器可验证。
-- **V1.2、可以在本地(macOS)用 mock 验证、已经验证过的**:`software.py` 加载(含 `auto` 不加载 mock、`none` 不产生任何文件、坏适配器/缺 `adapters/` 目录不影响启动)、attach 后立刻 `get_state`、进程退出 detach 再重新 attach、三种 `MOCK_FAULT` 的隔离行为(`crash` 10 次后停用、`slow` 超时后仍能按时返回、`flood` 每次 5000 条 `stop()` 仍只要几十毫秒)、非法记录丢弃;`trajectory.py` 三个新字段的归并规则(最接近截图 + 前台过滤 + 3 s 上限、300 ms 前置容忍且每条只归一个 step、最后一步到录制结束)、HTML 为空不显示;`--adapters none` 时 `trajectory.jsonl` 去掉三个新字段后与 V1.1 完全一致(用 `samples/demo_episode` 逐字段比对)。本地验证方法:用 `software.SoftwareManager` 直接调 `notify_foreground("notepad.exe")` / `notify_observation()` / `notify_drain()` 模拟 Recorder,再对生成的 episode 跑 `trajectory.py`。
+- **V1.2、可以在本地(macOS)用 mock 验证、已经验证过的**:`software.py` 加载(含 `auto` 不加载 mock、`none` 不产生任何文件、坏适配器/缺 `adapters/` 目录不影响启动)、attach 后立刻 `get_state`、进程退出 detach 再重新 attach、三种 `MOCK_FAULT` 的隔离行为(`crash` 10 次后停用、`slow` 超时后仍能按时返回、`flood` 每次 5000 条 `stop()` 仍只要几十毫秒)、非法记录丢弃;`trajectory.py` 三个新字段的归并规则(最接近截图 + 前台过滤 + 3 s 上限、300 ms 前置容忍且每条只归一个 step、最后一步到录制结束)、三个字段没有内容时为 `null` 且 HTML 始终显示对应区块;`--adapters none` 时 `trajectory.jsonl` 去掉三个新字段后与 V1.1 完全一致(用 `samples/demo_episode` 逐字段比对)。本地验证方法:用 `software.SoftwareManager` 直接调 `notify_foreground("notepad.exe")` / `notify_observation()` / `notify_drain()` 模拟 Recorder,再对生成的 episode 跑 `trajectory.py`。
 
 ## task.md 里没规定清楚、按最简单方案处理的地方
 
@@ -337,9 +341,11 @@ $env:MOCK_FAULT = "crash"; python main.py --output C:\traj --task task.json --wa
 31. **"连续 10 次"的计数**:所有方法(含 attach/detach)的超时和异常都计入,任何一次成功调用清零;`attach` 返回 `False` 不算异常。停用后不再调用它的任何方法,包括 `detach()`。
 32. **`Adapter()` 的实例化**放在适配器自己的线程里、计入 attach 的 10 s 预算(构造函数卡住不会拖住启动);`adapter.py` 的 import 在主线程里做,异常会被捕获,但 import 本身死循环的话目前没有防护。
 33. **适配器加载方式**:按文件路径导入 `adapters/<目录名>/adapter.py`,不作为包导入,所以 `adapter.py` 里不能用相对 import。
-34. **`meta.json` 的 `adapters` 字段**:`attached` 表示本次录制中**是否曾经** attach 成功(结束时所有适配器都已断开,"当前是否连接"没有意义);另外加了 `process_names`,`trajectory.py` 靠它判断截图时刻的前台进程对应哪个适配器。`--adapters none` 时没有 `adapters` 键,保证与 V1.1 一致;`auto` 但一个都没加载时是 `[]`。
+34. **`meta.json` 的 `adapters` 字段**:`attached` 表示本次录制中**是否曾经** attach 成功(结束时所有适配器都已断开,"当前是否连接"没有意义);另外加了 `process_names`,`trajectory.py` 靠它判断截图时刻的前台进程对应哪个适配器。`--adapters none` 时没有 `adapters` 键;`auto` 但一个都没加载时是 `[]`(HTML 的"监视的软件"卡片两种情况都显示 `null`)。
 35. **`software_actions` 的 300 ms 前置容忍区不重叠**:按字面 `[T-300, T_next)`,前一步的窗口 `[T_prev-300, T)` 和这一步在 `[T-300, T)` 重叠,同一条记录会进两个 step。实现上每条记录只归入**较晚**的那个 step(即前一步实际窗口是 `[T_prev-300, T-300)`)。最后一个 step 没有 action,所以 action 记录的"最后一个窗口"是最后一个有 action 的 step,开到录制结束。
 36. **step 0 的软件记录窗口从录制开始算**:同已有 files/processes 事件的 step 0 规则,避免 attach 后第一个动作前产生的记录丢失。录制开始前的记录丢弃。
 37. **`software_state` 没有截图或没有窗口信息的 step 为 `null`**。
 38. **HTML 每步最多展示 50 条软件记录**(`flood` 时一步可能有上万条),`trajectory.jsonl` 里全部保留。
 39. **mock 的交付范围**:只有 `adapter.py`、`capabilities.yaml` 和调试入口(`__main__.py`,为了 `python -m adapters.mock --probe` 能用,另加了 `adapters/__init__.py`、`adapters/mock/__init__.py` 两个空文件);规范第 2 节要求的适配器 README.md 和 requirements.txt 没有写。`SPEC_VERSION` 填 `"1"`(规范标题是 v1,示例里的 `"0.3"` 看起来是示意)。
+40. **三个软件字段和 HTML 区块固定存在,没有内容填 `null`**:task-v1.2.md 写的是没有适配器时 `null`/`[]`/`[]`、HTML 为空不显示;按沟通中的要求改成三者都用 `null`、HTML 始终显示。
+41. **"监视的软件"清单只放在 HTML 顶部**(数据来自 `meta.json`),不写进 `trajectory.jsonl`,保持它"每行都是一个 step"的格式,下游读取代码不用改。

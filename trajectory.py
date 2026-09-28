@@ -691,7 +691,8 @@ def _assign_software_records(steps, software, recording_start_t_ms):
     the 300 ms lead-in belongs to the later step only instead of both.
     events.software: records in [T, T_next), the last step open-ended.
     Step 0 starts at recording start, like the existing files/processes
-    events. Every record lands in exactly one step."""
+    events. Every record lands in exactly one step. A step with no records
+    gets null, not an empty list."""
     for step in steps:
         step["events"]["software"] = []
         if step["action"] is not None:
@@ -710,6 +711,11 @@ def _assign_software_records(steps, software, recording_start_t_ms):
     action_steps = [s for s in steps if s["action"] is not None]
     assign(software["actions"], action_steps, SOFTWARE_ACTION_LEAD_MS, lambda s: s["action"]["software_actions"])
     assign(software["events"], steps, 0, lambda s: s["events"]["software"])
+
+    for step in steps:
+        step["events"]["software"] = step["events"]["software"] or None
+        if step["action"] is not None:
+            step["action"]["software_actions"] = step["action"]["software_actions"] or None
 
 
 # --------------------------------------------------------------------------
@@ -841,9 +847,6 @@ def _render_action_html(action, sizes):
     if "target" in action:
         parts.append('<div class="subhead">UIA target</div>')
         parts.append(_render_target_html(action["target"]))
-    if action.get("software_actions"):
-        parts.append('<div class="subhead">Software actions</div>')
-        parts.append(_render_software_records_html(action["software_actions"]))
     shot = action.get("screenshot")
     parts.append('<div class="subhead">Screenshot(动作触发瞬间)</div>')
     if shot:
@@ -861,6 +864,8 @@ SOFTWARE_RECORDS_HTML_LIMIT = 50
 def _render_software_records_html(records):
     """Adapter action/event records, one line each. Only the first
     SOFTWARE_RECORDS_HTML_LIMIT are shown; trajectory.jsonl keeps them all."""
+    if not records:
+        return '<p class="empty">null</p>'
     items = []
     for r in records[:SOFTWARE_RECORDS_HTML_LIMIT]:
         params = json.dumps(r.get("params"), ensure_ascii=False)
@@ -873,6 +878,8 @@ def _render_software_records_html(records):
 
 
 def _render_software_state_html(state):
+    if not state:
+        return '<p class="empty">null</p>'
     return _kv_table([(k, _esc(json.dumps(v, ensure_ascii=False))) for k, v in state.items()])
 
 
@@ -985,17 +992,10 @@ def _render_step_html(step, sizes):
     term = obs.get("terminal")
     terminal_html = f'<pre>{_esc(term["stdout"])}</pre>' if term else '<p class="empty">无</p>'
 
-    # V1.2 blocks are omitted entirely when empty (task-v1.2.md)
-    state = obs.get("software_state")
-    software_state_html = (
-        f'\n      <details open><summary>Software state</summary>{_render_software_state_html(state)}</details>'
-        if state else ""
-    )
-    software_events = events.get("software") or []
-    software_events_html = (
-        f'\n      <details open><summary>Software events</summary>{_render_software_records_html(software_events)}</details>'
-        if software_events else ""
-    )
+    # V1.2 blocks are always shown, "null" when there's nothing
+    software_state_html = _render_software_state_html(obs.get("software_state"))
+    software_actions_html = _render_software_records_html((action or {}).get("software_actions"))
+    software_events_html = _render_software_records_html(events.get("software"))
 
     return f'''<details class="step">
 <summary>{summary}</summary>
@@ -1005,18 +1005,22 @@ def _render_step_html(step, sizes):
     <div class="section-body">
       <details open><summary>Screenshot</summary>{screenshot_html}</details>
       <details open><summary>Window</summary>{window_html}</details>
-      <details open><summary>Terminal</summary>{terminal_html}</details>{software_state_html}
+      <details open><summary>Terminal</summary>{terminal_html}</details>
+      <details open><summary>Software state</summary>{software_state_html}</details>
     </div>
   </details>
   <details class="section" open>
     <summary>Action</summary>
-    <div class="section-body">{_render_action_html(action, sizes)}</div>
+    <div class="section-body">{_render_action_html(action, sizes)}
+      <details open><summary>Software actions</summary>{software_actions_html}</details>
+    </div>
   </details>
   <details class="section" open>
     <summary>Events</summary>
     <div class="section-body">
       <details open><summary>File events</summary>{_render_file_events_html(events.get("files"))}</details>
-      <details open><summary>Process events</summary>{_render_process_events_html(events.get("processes"))}</details>{software_events_html}
+      <details open><summary>Process events</summary>{_render_process_events_html(events.get("processes"))}</details>
+      <details open><summary>Software events</summary>{software_events_html}</details>
     </div>
   </details>
   <details class="section" open>
@@ -1046,7 +1050,23 @@ def _render_task_card_html(episode_dir):
 </div>'''
 
 
-def render_html(steps, episode_dir: Path):
+def _render_monitored_html(meta):
+    """The "which software was monitored" card at the top of the page,
+    from meta.json's adapters list; null when no adapter was loaded."""
+    adapters = meta.get("adapters") or []
+    if not adapters:
+        body = '<p class="empty">null</p>'
+    else:
+        items = []
+        for a in adapters:
+            status = "已停用" if a.get("disabled") else ("已连接过" if a.get("attached") else "从未连接")
+            items.append(f'<li><b>{_esc(a.get("name"))}</b> ({_esc(", ".join(a.get("process_names") or []))}) '
+                         f'<span class="empty">— {status}</span></li>')
+        body = "<ul>" + "".join(items) + "</ul>"
+    return f'<div class="task-card"><div class="subhead">监视的软件</div>{body}</div>'
+
+
+def render_html(steps, episode_dir: Path, meta):
     sizes = {}
     for s in steps:
         shots = [s["observation"].get("screenshot")]
@@ -1066,7 +1086,7 @@ def render_html(steps, episode_dir: Path):
     )
 
     steps_html = "\n".join(_render_step_html(s, sizes) for s in steps)
-    task_card_html = _render_task_card_html(episode_dir)
+    task_card_html = _render_task_card_html(episode_dir) + _render_monitored_html(meta)
 
     cursor_icon = _load_cursor_icon()
     if cursor_icon:
@@ -1191,7 +1211,7 @@ def generate(episode_dir: Path):
     (snapshots_dir / "index.json").write_text(
         json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    render_html(steps, episode_dir)
+    render_html(steps, episode_dir, meta)
     return steps
 
 

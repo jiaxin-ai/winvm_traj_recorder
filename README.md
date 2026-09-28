@@ -1,6 +1,6 @@
-# Windows Trajectory Recorder V1 + V1.1
+# Windows Trajectory Recorder V1 + V1.1 + V1.2
 
-在 Windows VM 中后台记录 computer use 轨迹:鼠标键盘、UIA element、截图/录屏、活动窗口、终端、文件变化、进程变化(V1),外加录制期间对工程文件的 git 快照(V1.1)。详细需求见 [task.md](task.md)(V1)和 [task-v1.1.md](task-v1.1.md)(V1.1,文件快照)。
+在 Windows VM 中后台记录 computer use 轨迹:鼠标键盘、UIA element、截图/录屏、活动窗口、终端、文件变化、进程变化(V1),外加录制期间对工程文件的 git 快照(V1.1),以及专业软件适配器的接入点(V1.2)。详细需求见 [task-v1.md](task-v1.md)(V1,下文提到的 "task.md" 都指它)、[task-v1.1.md](task-v1.1.md)(V1.1,文件快照)和 [task-v1.2.md](task-v1.2.md)(V1.2,软件适配器;适配器一侧的接口见 [adapters/software_trajectory_collector_specification.md](adapters/software_trajectory_collector_specification.md))。
 
 开发环境是 macOS,最终运行在 Windows VM。**本 README 里标注"未在 Windows 上验证"的部分,只是写了代码、在 macOS 上做过语法/导入检查(V1.1 的快照核心逻辑还做过 macOS 本地 git 集成测试,见下文),没有在真实 Windows 环境跑过,请按下面的步骤在 VM 上逐一验证。**
 
@@ -18,7 +18,9 @@
 | [input_recorder.py](input_recorder.py) | Windows | 全局键鼠钩子(pynput)。回调里只记时间戳入队,UIA 查询和截图分别丢到两个独立的后台线程处理,避免互相卡顿。截图分两种:动作*触发瞬间*立刻截一张("trigger",给 `action.screenshot` 用),键鼠安静下来(`SETTLE_DELAY_MS`)后再截一张("settle",给下一步的 `observation.screenshot` 用)。检测到"打字序列开始"时查询一次 focused UIA element。V1.1:额外用 `win32_event_filter` 真正吞掉 Ctrl+Alt+Shift+M(milestone 快捷键),不进入轨迹。 |
 | [snapshot.py](snapshot.py) | 跨平台(git 本身跨平台;由 Windows-only 的 `main.py` 驱动) | V1.1 新增。管理每个 episode 自己的 bare git 仓库,在文件变更/milestone/录制起止时提交一次快照。唯一封装 git 调用的地方(`run_git`),`restore.py` 也复用它。 |
 | [restore.py](restore.py) | 跨平台(导出模式)/ Windows(就地恢复模式实际会用到) | V1.1 新增。独立命令行工具:列出/导出/就地恢复某个 episode 的某个文件版本。命令行参数是 `<episode_dir>/snapshots` 目录本身,不是 episode 目录。 |
-| [main.py](main.py) | Windows | 启动顺序、协调所有模块、初始观测、等待停止信号、收尾(复制 artifacts、生成 trajectory)。V1.1:检查 `--output`/`--watch` 不嵌套、初始化/收尾 snapshot 仓库、写 `meta.json`。 |
+| [software.py](software.py) | 跨平台(纯 stdlib) | V1.2 新增。加载 `adapters/` 下的适配器,在 Recorder 已有的采集点调用它们(每个适配器一个独立线程 + 超时预算),把返回的记录原样写进 `raw/software_*.jsonl`。 |
+| [adapters/mock/](adapters/mock/) | 跨平台(`active_document` 只在 Windows 上有值) | V1.2 新增。MockCAD 假适配器,把 `notepad.exe` 当作"专业软件",用来验证接入是否正确;支持 `MOCK_FAULT` 故障注入。 |
+| [main.py](main.py) | Windows | 启动顺序、协调所有模块、初始观测、等待停止信号、收尾(复制 artifacts、生成 trajectory)。V1.1:检查 `--output`/`--watch` 不嵌套、初始化/收尾 snapshot 仓库、写 `meta.json`。V1.2:`--adapters` 参数、启停 `software.py`、在已有采集点通知它、把适配器状态写进 `meta.json`。 |
 | [install_profile.ps1](install_profile.ps1) | Windows | 把 transcript 钩子装进 Windows PowerShell 5.1 和 PowerShell 7(如果装了)的 AllUsersAllHosts profile。 |
 | [requirements.txt](requirements.txt) | — | 全部 Python 依赖,Windows 专用包标了 `sys_platform == "win32"`。 |
 | [samples/demo_episode/](samples/demo_episode/) | — | 伪造的一份完整 raw 数据(`task.json` + `raw/events.jsonl` + `raw/terminal/*.txt`),覆盖全部 8 种 action、4 种文件事件、进程 start/exit、terminal 输出、第一步/最后一步,用于验证 `trajectory.py`。 |
@@ -70,6 +72,7 @@ python processes.py      # 打开/关闭一个程序(如记事本),看 start/exi
 python files.py --watch C:\task  # 在 C:\task 下新建/编辑/删除/改名文件,看事件是否正确
 python terminal.py <episode_dir>   # 写入标记文件后,按提示打开一个新 PowerShell 窗口执行几条命令,回车结束后检查 <episode_dir>\raw\terminal\ 下有没有生成 transcript
 python input_recorder.py # 综合测试:点击、拖拽、打字、按快捷键,看 raw_test\events.jsonl 里事件是否符合预期(这一步依赖 uia.py 和 screen.py,建议放在它们都验证过之后再测)
+python -m adapters.mock --probe  # V1.2:不经过 Recorder,直接 attach mock 并打印一次 get_state()(开着记事本时 active_document 应为其窗口标题);--watch 持续打印 get_actions/get_events
 python snapshot.py --watch C:\task --episode-dir C:\tmp\snap_test  # V1.1:在 C:\task 下新建/编辑文件,等 3 秒看是否自动 commit;回车触发一次 milestone;Ctrl+C 结束看 repo.bundle 是否生成
 ```
 
@@ -170,6 +173,100 @@ python restore.py <episode_dir>\snapshots --step 12 --in-place --kill       # �
 - git 不可用,或初始化仓库失败,快照功能会自动关闭并继续正常录制(`meta.json` 里的 `snapshot.reason` 会记原因),不影响 V1 的其余采集。
 - 单个变更文件超过 200MB 时只会额外记一条警告事件,不做特殊处理(仍然正常提交)。
 
+## 软件适配器(V1.2)
+
+适配器是别人按 [适配器规范](adapters/software_trajectory_collector_specification.md) 写的 Python 模块,连接某个专业软件(AutoCAD、SolidWorks……),在轨迹里补充软件内部的状态、命令和结果。本版只做 Recorder 一侧的接入点和一个 mock 适配器;没有适配器时行为与 V1.1 完全一致。
+
+### 放置与启用
+
+```
+adapters/<目录名>/
+├── adapter.py          含 Adapter 类(NAME / PROCESS_NAMES / SPEC_VERSION + 五个方法)
+└── capabilities.yaml   声明返回的字段
+```
+
+把目录放进 `adapters/` 即可,不需要注册。启动时 `software.py` 扫描各子目录、导入 `adapter.py`、读出 `NAME`、`PROCESS_NAMES`、`SPEC_VERSION`;导入失败的只打印警告并跳过,`adapters/` 目录不存在也不影响启动。
+
+```powershell
+python main.py ... --adapters auto          # 默认:加载全部适配器(mock 除外),前台进程匹配到 PROCESS_NAMES 时自动连接
+python main.py ... --adapters none          # 完全禁用,输出与 V1.1 一致(只多三个 null/[] 字段)
+python main.py ... --adapters mock,autocad  # 只加载这几个(adapters/ 下的目录名,不区分大小写)
+```
+
+**mock 不会被 `auto` 加载**,必须 `--adapters mock` 显式指定——它把 `notepad.exe` 当成"专业软件",如果默认启用,每一份用到记事本的真实录制都会混进假数据。
+
+连接规则(task-v1.2.md 第二节):前台进程名匹配 → `attach()`,成功后立刻 `get_state()` 一次;`attach` 返回 `False`/超时/抛异常 → 30 s 后(且那时它仍在前台)重试,连续 3 次失败本次录制不再重试;进程退出 → `detach()`,之后它再到前台时重新 `attach()`;录制结束 → 最后一次 `get_actions()`/`get_events()`,然后对所有已连接的适配器 `detach()`。
+
+调用时机不新增:`get_state()` 跟 observation 截图(settle 截图,包括开始/结束时 `main.py` 自己截的那两张)同一时刻;`get_actions()` + `get_events()` 跟主轨迹采集键鼠动作、文件事件、进程事件同一时刻。
+
+### 隔离
+
+- 每个适配器一个独立线程,它的所有方法都只在这个线程上、一次一个地执行。
+- 采集点(键鼠钩子、截图线程、窗口/进程轮询、文件监控)只是给 `software.py` 的调度线程置一个标志就立刻返回,**永远不会等适配器**;由调度线程按预算等结果:`attach` 10 s、`get_state` 500 ms、`get_actions`/`get_events` 各 200 ms、`detach` 5 s。超时就放弃这次结果(还没开始执行的调用直接跳过)。
+- 抛异常会被捕获,完整 traceback 写进 `raw/adapters.log`,结果按空处理。
+- **连续 10 次超时或异常 → 本次录制停用该适配器**,录制继续,`meta.json` 里 `disabled: true`。
+- `detach` 超时无法真的杀掉 Python 线程,做法是放弃那个线程(daemon),之后再 `attach` 时换新线程、新实例。
+
+### raw 新增文件
+
+```
+raw/
+├── software_state.jsonl      每次 get_state() 的返回值(None 不写)
+├── software_actions.jsonl    get_actions() 返回的记录,逐条
+├── software_events.jsonl     get_events() 返回的记录,逐条
+├── adapters.log              加载、连接/断开、超时、异常、停用、丢弃的记录
+└── adapters/<目录名>.capabilities.yaml   启动时复制
+```
+
+记录**原样**写入,不改任何字段。只丢弃:不是 dict、缺必需字段(state:`t_ms software active_document selection mode`;action/event:`t_ms software type name params source raw`)、`t_ms` 不是整数、或无法序列化成 JSON 的记录,并在 `adapters.log` 里记数量和原因。`--adapters none` 时以上文件一个都不会产生。
+
+`meta.json` 多一个 `adapters` 列表(`--adapters none` 时没有这个键),录制开始写一次、结束时带最终计数再写一次:
+
+```json
+"adapters": [{"name": "MockCAD", "spec_version": "1", "attached": true,
+              "timeouts": 0, "errors": 0, "disabled": false, "process_names": ["notepad.exe"]}]
+```
+
+### 轨迹里的三个新字段
+
+| 字段 | 含义 | 什么时候为 null / 空 |
+|---|---|---|
+| `observation.software_state` | 与本 step observation 截图时刻**最接近**的一条 state 记录,且只取**截图那一刻前台进程**对应适配器的记录 | 没有适配器、前台不是被适配的软件、软件已关闭、`get_state` 超时、或最接近的一条相差超过 3 s → `null` |
+| `action.software_actions` | `t_ms` 落在 `[T - 300ms, T_next)` 的全部 action 记录,按 `t_ms` 升序;保留所有适配器的记录,每条自带 `software` 字段 | 这段时间没有记录 → `[]`;最后一个 step 的 action 本身是 `null`,所以没有这个字段 |
+| `events.software` | `t_ms` 落在 `[T, T_next)` 的全部 event 记录,按 `t_ms` 升序;同样保留所有适配器的 | 这段时间没有记录 → `[]` |
+
+`T` 是本 step 动作开始时刻,`T_next` 是下一 step 的;最后一个 step 的窗口开到录制结束。step 0 的窗口从录制开始算(和已有的 files/processes 事件一致),所以 attach 后、第一个动作前产生的记录不会丢。
+
+`trajectory.html` 里:Observation 下多一个 "Software state",Action 下多一个 "Software actions",Events 下多一个 "Software events";**为空时整个区块不显示**。每个 step 最多显示 50 条记录(`trajectory.jsonl` 里是全部)。
+
+### mock 适配器与故障注入
+
+`adapters/mock/`:`NAME = "MockCAD"`、`PROCESS_NAMES = ["notepad.exe"]`。
+
+- `get_state()`:固定结构,`active_document` 是记事本窗口标题(不是 Windows 或没开记事本时为 `null`)。
+- `get_actions()` / `get_events()`:每被调用一次就现场生成一条记录(`command` / `command_executed`),`t_ms` 为生成时刻。**真适配器不能这样做**——规范要求 `t_ms` 在软件事件发生时打上;mock 没有真实事件,只能用调用时刻。
+- 调试入口(规范 3.3 节,在项目根目录运行):`python -m adapters.mock --probe` / `python -m adapters.mock --watch`。
+
+环境变量 `MOCK_FAULT` 注入故障,验证隔离:
+
+| 值 | 效果 | 预期 |
+|---|---|---|
+| `slow` | `get_state()` 睡 2 s | 该步 `software_state` 为 `null`,录制无卡顿;worker 线程被占住期间排在后面的调用也会超时,所以持续操作一会儿后会因连续 10 次超时被停用 |
+| `crash` | `get_state` / `get_actions` / `get_events` 抛异常(`attach` 正常成功) | 连续 10 次后停用,`meta.json` 里 `disabled: true`,录制继续 |
+| `flood` | 每次 `get_events()` 返回 5000 条(规范上限是 200) | Recorder 不卡顿,轨迹正常生成;HTML 每步只显示前 50 条 |
+
+```powershell
+$env:MOCK_FAULT = "crash"; python main.py --output C:\traj --task task.json --watch C:\task --adapters mock
+```
+
+### 适配器不产生记录时怎么查
+
+1. 看启动时终端打印的 `[trajrec] 已加载软件适配器: [...]`——不在列表里,就去 `raw/adapters.log` 找导入失败的 traceback;`--adapters` 写的名字要和 `adapters/` 下的**目录名**一致;mock 必须显式指定。
+2. `raw/adapters.log` 里有没有 `attach 成功`——没有的话,检查前台进程名是否在 `PROCESS_NAMES` 里(对照 `raw/events.jsonl` 里 `window_active` 事件的 `process` 字段,不区分大小写);看是否有 `attach 返回 False`、`attach 超时`、"不再重试"。
+3. attach 成功但没有记录:`adapters.log` 里找 `超时` / `抛异常` / `停用` / `丢弃 N 条非法记录`(后者会写第一条被丢的原因,一般是缺字段或 `t_ms` 不是整数);`meta.json` 里看 `timeouts` / `errors` / `disabled`。
+4. 有记录但轨迹里对不上:`software_state` 只取截图时刻**前台**软件对应适配器、3 s 以内的记录;action/event 按记录自己的 `t_ms` 归入 step,`t_ms` 打错了(比如用了被取走时的时间)就会落到错的 step。
+5. 脱离 Recorder 单独排查适配器本身:`python -m adapters.<目录名> --probe` / `--watch`。
+
 ## 尚未在 Windows 上验证的部分
 
 以下功能只写了代码、在 macOS 上做过 import/语法检查(不会崩溃、平台判断正常),**没有在真实 Windows 环境跑过**,需要在 VM 上按上面的步骤逐一验证:
@@ -187,6 +284,13 @@ python restore.py <episode_dir>\snapshots --step 12 --in-place --kill       # �
   - `C:\ProgramData\trajrec\MILESTONE` 控制文件轮询在真实文件系统延迟下是否可靠,以及大文件(≥50MB)保存时"静默等待"的实际耗时是否符合预期。
   - `restore.py --in-place --kill` 里的进程名单(`SOFTWARE_PROCESS_NAMES`)是否覆盖了实际会用到的软件,进程 kill 后 3 秒等待是否够用。
 - **V1.1、跨平台逻辑、已在 macOS 上用真实本地 git 仓库测过**(不算"未验证"里,但列出来说明验证范围):`snapshot.py` 的触发合并/丢弃规则、quiet-wait、episode_start/episode_end 提交、`repo.bundle` 打包,以及 `restore.py` 的 `--list`/`--export`/`--in-place`(含"版本之后新建文件移入 `_discarded`"这条)——见开发过程中跑的临时脚本,逻辑已用真实 commit 验证过,只是没在 Windows 真实文件系统 + 真实专业软件的场景下跑过。
+- **V1.2、Windows 特有、完全没测过**:
+  - `window.py` 报告的前台进程名(记事本在 Win11 上是 `Notepad.exe`)能否让 mock 正确 attach;`processes.py` 的 exit 事件能否及时触发 `detach()`,重新打开记事本后能否重新 attach(验收第 3、7 条)。
+  - mock 的 `active_document` 取记事本窗口标题(`win32gui.EnumWindows`)。
+  - 真实录制下的时序:键鼠钩子线程、截图线程调 `notify_*()` 后是否确实没有可感知的延迟;`MOCK_FAULT=slow/crash/flood` 下录制是否无卡顿(验收第 8–10 条)。
+  - 在真实 `main.py` 流程里跑出的 `meta.json`、`raw/software_*.jsonl`、HTML 区块(验收第 1–6 条)。
+  - 真适配器的 COM 线程要求:所有方法确实都在同一线程调用(代码保证),但没有真的 COM 适配器可验证。
+- **V1.2、可以在本地(macOS)用 mock 验证、已经验证过的**:`software.py` 加载(含 `auto` 不加载 mock、`none` 不产生任何文件、坏适配器/缺 `adapters/` 目录不影响启动)、attach 后立刻 `get_state`、进程退出 detach 再重新 attach、三种 `MOCK_FAULT` 的隔离行为(`crash` 10 次后停用、`slow` 超时后仍能按时返回、`flood` 每次 5000 条 `stop()` 仍只要几十毫秒)、非法记录丢弃;`trajectory.py` 三个新字段的归并规则(最接近截图 + 前台过滤 + 3 s 上限、300 ms 前置容忍且每条只归一个 step、最后一步到录制结束)、HTML 为空不显示;`--adapters none` 时 `trajectory.jsonl` 去掉三个新字段后与 V1.1 完全一致(用 `samples/demo_episode` 逐字段比对)。本地验证方法:用 `software.SoftwareManager` 直接调 `notify_foreground("notepad.exe")` / `notify_observation()` / `notify_drain()` 模拟 Recorder,再对生成的 episode 跑 `trajectory.py`。
 
 ## task.md 里没规定清楚、按最简单方案处理的地方
 
@@ -219,3 +323,23 @@ python restore.py <episode_dir>\snapshots --step 12 --in-place --kill       # �
 20. **`restore.py --in-place` 判断"该版本之后新建的文件"**:没有用 `git status`(它检测不到"当前 HEAD 仍追踪、但目标版本没有"的文件,`git checkout -f <commit> -- .` 不会把这类文件从索引里摘掉),改成直接对比 `git ls-tree -r --name-only <commit>` 和工作目录实际文件列表,凡是磁盘上有、目标版本里没有的都移进 `_discarded`。
 21. **`restore.py` 的命令行参数是 `snapshots_dir`(即 `<episode_dir>/snapshots`),不是 `episode_dir`**:这样 `--list` 能直接从这个参数拼出 `index.json`/`repo.git` 的路径,不用自己再往下找一层 `snapshots/`;`episode_dir`(`snapshots_dir` 的上一级)只在需要读 `trajectory.jsonl`(`--step` 查找 `file_ckpt`)或算 `--export` 默认目标路径时才用到,内部用 `snapshots_dir.parent` 推出来。
 22. **`--in-place --kill` 之后不自动重新打开软件/文件**:task-v1.1.md 原文就是"打印恢复结果,并提示用户重新打开软件和文件"——写的是"提示",不是"自动重开",所以就按这个来。没做自动重开还有个更实际的原因:`--kill` 杀掉的进程,并不总能可靠地知道它当时打开的是哪个文件——很多软件是先启动、再通过"最近打开"或手动 File→Open 加载文件的,`psutil` 能拿到的命令行参数(`cmdline()`)不一定包含文件路径,贸然用错误的路径去拉起软件可能比"不自动开"更糟。
+
+以下是 task-v1.2.md 里没规定清楚、按最简单方案处理的地方:
+
+23. **task-v1.2.md 与适配器规范的冲突**:按"Recorder 行为以 task-v1.2.md 为准、接口与记录格式以规范为准"处理。所以规范里的"空闲时每 5 s 一次 `get_state`""每 500 ms 一次 `get_actions/get_events`"**没有实现**(task-v1.2.md 要求不新增采集时机);attach 失败的重试用 task-v1.2.md 的"30 s 后重试、连续 3 次失败不再重试",不是规范的"重试一次"。
+24. **mock 不参与 `--adapters auto`**:见上文,避免真实录制里混进假数据。这是在"auto = 按前台进程自动匹配"之外加的唯一例外。
+25. **采集点不等待适配器**:task-v1.2.md 说"调用方投递请求后等待结果,超过上限即放弃"。这里的"调用方"是 `software.py` 自己的调度线程,不是键鼠钩子/截图线程——后者只置标志立刻返回。代价是 `get_state` 的实际调用时刻会比截图晚一点(通常几毫秒;如果调度线程正卡在另一个适配器的 10 s attach 上会更晚),归并时按"最接近截图时刻"取,影响不大。
+26. **通知合并**:两次调度之间来的多个同类通知(比如连续按键)合并成一次调用。`get_actions/get_events` 是取队列,合并不丢记录;`get_state` 合并后取的是最新状态。
+27. **`get_actions()` 和 `get_events()` 总是一起调用**:动作采集点和事件采集点(文件/进程事件)都触发这一对,不区分。
+28. **`window.py` 和 `input_recorder.py` 没有改动**:前台进程变化本来就经由 `window.poll_loop` 的回调到 `main.py` 的 `_on_window`,在那里通知;键鼠动作和 settle 截图本来就经过 `InputRecorder` 的 `on_event` 回调,在 `main.py` 里按事件类型分别通知 `notify_drain()` / `notify_observation()`。
+29. **进程退出的判定**:`processes.py` 报告的任意一个同名进程退出就 `detach()`(同时开着两个记事本、关掉其中一个也会断开),之后它再到前台时重新 attach。刚退出的进程如果还是"最近一次报告的前台进程",不会用它触发重新 attach。
+30. **attach 重试时机**:30 s 到了之后,只有该软件**当时仍在前台**才重试;不在前台就等它下次到前台。调度线程每秒醒一次只为检查这件事,不调用任何适配器方法。
+31. **"连续 10 次"的计数**:所有方法(含 attach/detach)的超时和异常都计入,任何一次成功调用清零;`attach` 返回 `False` 不算异常。停用后不再调用它的任何方法,包括 `detach()`。
+32. **`Adapter()` 的实例化**放在适配器自己的线程里、计入 attach 的 10 s 预算(构造函数卡住不会拖住启动);`adapter.py` 的 import 在主线程里做,异常会被捕获,但 import 本身死循环的话目前没有防护。
+33. **适配器加载方式**:按文件路径导入 `adapters/<目录名>/adapter.py`,不作为包导入,所以 `adapter.py` 里不能用相对 import。
+34. **`meta.json` 的 `adapters` 字段**:`attached` 表示本次录制中**是否曾经** attach 成功(结束时所有适配器都已断开,"当前是否连接"没有意义);另外加了 `process_names`,`trajectory.py` 靠它判断截图时刻的前台进程对应哪个适配器。`--adapters none` 时没有 `adapters` 键,保证与 V1.1 一致;`auto` 但一个都没加载时是 `[]`。
+35. **`software_actions` 的 300 ms 前置容忍区不重叠**:按字面 `[T-300, T_next)`,前一步的窗口 `[T_prev-300, T)` 和这一步在 `[T-300, T)` 重叠,同一条记录会进两个 step。实现上每条记录只归入**较晚**的那个 step(即前一步实际窗口是 `[T_prev-300, T-300)`)。最后一个 step 没有 action,所以 action 记录的"最后一个窗口"是最后一个有 action 的 step,开到录制结束。
+36. **step 0 的软件记录窗口从录制开始算**:同已有 files/processes 事件的 step 0 规则,避免 attach 后第一个动作前产生的记录丢失。录制开始前的记录丢弃。
+37. **`software_state` 没有截图或没有窗口信息的 step 为 `null`**。
+38. **HTML 每步最多展示 50 条软件记录**(`flood` 时一步可能有上万条),`trajectory.jsonl` 里全部保留。
+39. **mock 的交付范围**:只有 `adapter.py`、`capabilities.yaml` 和调试入口(`__main__.py`,为了 `python -m adapters.mock --probe` 能用,另加了 `adapters/__init__.py`、`adapters/mock/__init__.py` 两个空文件);规范第 2 节要求的适配器 README.md 和 requirements.txt 没有写。`SPEC_VERSION` 填 `"1"`(规范标题是 v1,示例里的 `"0.3"` 看起来是示意)。

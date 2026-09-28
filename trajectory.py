@@ -11,6 +11,7 @@ Usage:
 """
 import argparse
 import base64
+import bisect
 import html
 import json
 import re
@@ -491,7 +492,8 @@ def _first_screenshot_at_or_after(screenshots, t_ms):
     return None
 
 
-def build_steps(raw_events, transcript_commands, snapshot_events=None, snapshot_enabled=False):
+def build_steps(raw_events, transcript_commands, snapshot_events=None, snapshot_enabled=False, software=None):
+    software = software or {"state": [], "actions": [], "events": [], "processes": {}}
     window_events = [e for e in raw_events if e["type"] == "window_active"]
     all_screenshots = [e for e in raw_events if e["type"] == "screenshot"]
     # Screenshots written before this field existed are treated as
@@ -530,6 +532,7 @@ def build_steps(raw_events, transcript_commands, snapshot_events=None, snapshot_
             "cursor": _cursor_at_or_before(mouse_position_events, win_t_ms),
             "window": {"title": win["title"], "process": win["process"]} if win else None,
             "terminal": None,
+            "software_state": _software_state_for(software, shot, win),
         }
         return obs
 
@@ -620,8 +623,93 @@ def build_steps(raw_events, transcript_commands, snapshot_events=None, snapshot_
         s["timestamp"] = datetime.fromtimestamp(s["t_ms"] / 1000, tz=TZ).isoformat(timespec="milliseconds")
 
     _assign_snapshots(steps, snapshot_events or [], snapshot_enabled)
+    _assign_software_records(steps, software, recording_start_t_ms)
 
     return steps
+
+
+# --------------------------------------------------------------------------
+# software adapter fields (task-v1.2.md section 5)
+# --------------------------------------------------------------------------
+
+SOFTWARE_STATE_MAX_GAP_MS = 3000
+SOFTWARE_ACTION_LEAD_MS = 300
+
+
+def _read_software_jsonl(path: Path):
+    """Records as software.py wrote them; unreadable lines are skipped."""
+    records = []
+    if not path.exists():
+        return records
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict) and isinstance(record.get("t_ms"), int):
+                records.append(record)
+    records.sort(key=lambda r: r["t_ms"])
+    return records
+
+
+def load_software_records(raw_dir: Path, meta):
+    """processes maps each adapter's NAME to its PROCESS_NAMES (from
+    meta.json), which is how a state record is tied to the foreground
+    window."""
+    processes = {a["name"]: [p.lower() for p in a.get("process_names", [])]
+                 for a in meta.get("adapters") or []}
+    return {
+        "state": _read_software_jsonl(raw_dir / "software_state.jsonl"),
+        "actions": _read_software_jsonl(raw_dir / "software_actions.jsonl"),
+        "events": _read_software_jsonl(raw_dir / "software_events.jsonl"),
+        "processes": processes,
+    }
+
+
+def _software_state_for(software, shot, win):
+    """The state record closest in time to this observation screenshot,
+    from the adapter of the foreground process only; None if there's none
+    within 3 s."""
+    if not shot or not win:
+        return None
+    process = (win.get("process") or "").lower()
+    names = {name for name, procs in software["processes"].items() if process in procs}
+    best = None
+    for record in software["state"]:
+        if record.get("software") not in names:
+            continue
+        gap = abs(record["t_ms"] - shot["t_ms"])
+        if gap <= SOFTWARE_STATE_MAX_GAP_MS and (best is None or gap < abs(best["t_ms"] - shot["t_ms"])):
+            best = record
+    return best
+
+
+def _assign_software_records(steps, software, recording_start_t_ms):
+    """action.software_actions: records in [T - 300ms, T_next - 300ms) of
+    the steps that have an action (the last one open-ended), so a record in
+    the 300 ms lead-in belongs to the later step only instead of both.
+    events.software: records in [T, T_next), the last step open-ended.
+    Step 0 starts at recording start, like the existing files/processes
+    events. Every record lands in exactly one step."""
+    for step in steps:
+        step["events"]["software"] = []
+        if step["action"] is not None:
+            step["action"]["software_actions"] = []
+
+    def assign(records, candidates, lead_ms, target):
+        if not candidates:
+            return
+        starts = [s["t_ms"] - lead_ms for s in candidates]
+        for record in records:
+            if record["t_ms"] < recording_start_t_ms:
+                continue
+            idx = max(bisect.bisect_right(starts, record["t_ms"]) - 1, 0)
+            target(candidates[idx]).append(record)
+
+    action_steps = [s for s in steps if s["action"] is not None]
+    assign(software["actions"], action_steps, SOFTWARE_ACTION_LEAD_MS, lambda s: s["action"]["software_actions"])
+    assign(software["events"], steps, 0, lambda s: s["events"]["software"])
 
 
 # --------------------------------------------------------------------------
@@ -746,13 +834,16 @@ def _render_action_html(action, sizes):
         return '<p class="empty">(结束,无动作)</p>'
     pairs = [("type", f"<b>{_esc(action['type'])}</b>")]
     for k, v in action.items():
-        if k in ("type", "target", "screenshot"):
+        if k in ("type", "target", "screenshot", "software_actions"):
             continue
         pairs.append((k, _esc(json.dumps(v, ensure_ascii=False))))
     parts = [_kv_table(pairs)]
     if "target" in action:
         parts.append('<div class="subhead">UIA target</div>')
         parts.append(_render_target_html(action["target"]))
+    if action.get("software_actions"):
+        parts.append('<div class="subhead">Software actions</div>')
+        parts.append(_render_software_records_html(action["software_actions"]))
     shot = action.get("screenshot")
     parts.append('<div class="subhead">Screenshot(动作触发瞬间)</div>')
     if shot:
@@ -762,6 +853,27 @@ def _render_action_html(action, sizes):
     else:
         parts.append('<p class="empty">无截图</p>')
     return "".join(parts)
+
+
+SOFTWARE_RECORDS_HTML_LIMIT = 50
+
+
+def _render_software_records_html(records):
+    """Adapter action/event records, one line each. Only the first
+    SOFTWARE_RECORDS_HTML_LIMIT are shown; trajectory.jsonl keeps them all."""
+    items = []
+    for r in records[:SOFTWARE_RECORDS_HTML_LIMIT]:
+        params = json.dumps(r.get("params"), ensure_ascii=False)
+        items.append(f'<li>[{_esc(r.get("software"))}] <b>{_esc(r.get("type"))}</b> {_esc(r.get("name"))} '
+                     f'{_esc(params)} <span class="empty">({_esc(r.get("source"))})</span></li>')
+    hidden = len(records) - SOFTWARE_RECORDS_HTML_LIMIT
+    if hidden > 0:
+        items.append(f'<li class="empty">……另有 {hidden} 条未显示(见 trajectory.jsonl)</li>')
+    return "<ul>" + "".join(items) + "</ul>"
+
+
+def _render_software_state_html(state):
+    return _kv_table([(k, _esc(json.dumps(v, ensure_ascii=False))) for k, v in state.items()])
 
 
 def _render_snapshot_html(snapshot):
@@ -873,6 +985,18 @@ def _render_step_html(step, sizes):
     term = obs.get("terminal")
     terminal_html = f'<pre>{_esc(term["stdout"])}</pre>' if term else '<p class="empty">无</p>'
 
+    # V1.2 blocks are omitted entirely when empty (task-v1.2.md)
+    state = obs.get("software_state")
+    software_state_html = (
+        f'\n      <details open><summary>Software state</summary>{_render_software_state_html(state)}</details>'
+        if state else ""
+    )
+    software_events = events.get("software") or []
+    software_events_html = (
+        f'\n      <details open><summary>Software events</summary>{_render_software_records_html(software_events)}</details>'
+        if software_events else ""
+    )
+
     return f'''<details class="step">
 <summary>{summary}</summary>
 <div class="step-body">
@@ -881,7 +1005,7 @@ def _render_step_html(step, sizes):
     <div class="section-body">
       <details open><summary>Screenshot</summary>{screenshot_html}</details>
       <details open><summary>Window</summary>{window_html}</details>
-      <details open><summary>Terminal</summary>{terminal_html}</details>
+      <details open><summary>Terminal</summary>{terminal_html}</details>{software_state_html}
     </div>
   </details>
   <details class="section" open>
@@ -892,7 +1016,7 @@ def _render_step_html(step, sizes):
     <summary>Events</summary>
     <div class="section-body">
       <details open><summary>File events</summary>{_render_file_events_html(events.get("files"))}</details>
-      <details open><summary>Process events</summary>{_render_process_events_html(events.get("processes"))}</details>
+      <details open><summary>Process events</summary>{_render_process_events_html(events.get("processes"))}</details>{software_events_html}
     </div>
   </details>
   <details class="section" open>
@@ -1052,8 +1176,9 @@ def generate(episode_dir: Path):
     snapshot_enabled = bool(snapshot_meta.get("enabled"))
     watch_dir = meta.get("watch_dir")
     snapshot_events = [e for e in raw_events if e["type"] == "snapshot"]
+    software = load_software_records(raw_dir, meta)
 
-    steps = build_steps(raw_events, transcript_commands, snapshot_events, snapshot_enabled)
+    steps = build_steps(raw_events, transcript_commands, snapshot_events, snapshot_enabled, software)
 
     out_path = episode_dir / "trajectory.jsonl"
     with out_path.open("w", encoding="utf-8") as f:

@@ -159,7 +159,7 @@ class InputRecorder:
         self._writer = writer
         self._screenshot_dir = Path(screenshot_dir) if screenshot_dir else None
         self._take_screenshot = take_screenshot  # callable(path) -> None; injected so this module doesn't hard-depend on screen.py's mss usage
-        self._on_event = on_event  # optional callback(event) for standalone/testing output
+        self._on_event = on_event  # optional callback(event), called on the emitting thread after each write; must not block
         self._on_milestone = on_milestone  # optional callable(t_ms) -> None, wired by main.py to snapshot.py
         self._shot_q = queue.Queue()
         self._uia_q = queue.Queue()

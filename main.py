@@ -33,6 +33,7 @@ import input_recorder
 import processes
 import screen
 import snapshot
+import software
 import terminal
 import trajectory
 import window
@@ -67,11 +68,13 @@ def check_watch_output_nesting(output_root, watch_dir):
         sys.exit(1)
 
 
-def write_meta(episode_dir, watch_dir, snapshot_mgr):
+def write_meta(episode_dir, watch_dir, snapshot_mgr, software_mgr):
     meta = {
         "watch_dir": str(Path(watch_dir).resolve()),
         "snapshot": {"enabled": snapshot_mgr.enabled, "reason": snapshot_mgr.disabled_reason},
     }
+    if software_mgr.enabled:
+        meta["adapters"] = software_mgr.status()
     (Path(episode_dir) / "meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -79,18 +82,21 @@ def write_meta(episode_dir, watch_dir, snapshot_mgr):
 class Episode:
     """Owns every collection module's lifecycle for one recording."""
 
-    def __init__(self, episode_dir, watch_dir, snapshot_enabled=True):
+    def __init__(self, episode_dir, watch_dir, snapshot_enabled=True, adapters="auto"):
         self.episode_dir = Path(episode_dir)
         self.watch_dir = watch_dir
         self.writer = input_recorder.JsonlWriter(self.episode_dir / "raw" / "events.jsonl")
         self.snapshot_mgr = snapshot.SnapshotManager(
             self.episode_dir, Path(watch_dir), self.writer, enabled=snapshot_enabled)
         self.snapshot_mgr.init_repo()  # resolved eagerly so main() can write meta.json before start()
+        self.software_mgr = software.SoftwareManager(self.episode_dir, software.parse_adapters_arg(adapters))
+        self.software_mgr.load()
         self.recorder = screen.Recorder()
         self.input_rec = input_recorder.InputRecorder(
             self.writer,
             screenshot_dir=self.episode_dir / "screenshots",
             take_screenshot=screen.take_screenshot,
+            on_event=self._on_input_event,
             on_milestone=lambda t_ms: self.snapshot_mgr.notify_milestone(None, t_ms),
         )
         self._window_stop = None
@@ -106,6 +112,8 @@ class Episode:
         # 1. recording + all background modules
         self.recorder.start(self.episode_dir / "recording.mp4")
         self._write({"t_ms": input_recorder.now_ms(), "type": "recording_start", "path": "recording.mp4"})
+
+        self.software_mgr.start()  # before window polling, so the first foreground report can attach
 
         import threading
         self._window_stop = threading.Event()
@@ -140,6 +148,7 @@ class Episode:
         screen.take_screenshot(shot_path)
         self._write({"t_ms": input_recorder.now_ms(), "type": "screenshot",
                      "path": f"screenshots/{shot_idx:06d}.png", "kind": "settle"})
+        self.software_mgr.notify_observation()
         win = window.get_active_window()
         if win:
             self._write({"t_ms": input_recorder.now_ms(), "type": "window_active", **win})
@@ -151,18 +160,32 @@ class Episode:
         self.input_rec.set_enabled(True)
 
     def _on_window(self, win):
+        self.software_mgr.notify_foreground(win["process"] if win else None)
         if win is None:
             return
         self._write({"t_ms": input_recorder.now_ms(), "type": "window_active", **win})
 
     def _on_process(self, event):
         self._write({"t_ms": input_recorder.now_ms(), "type": "process_event", **event})
+        if event.get("op") == "exit":
+            self.software_mgr.notify_process_exit(event.get("name"))
+        self.software_mgr.notify_drain()
 
     def _on_file(self, event):
         t_ms = input_recorder.now_ms()
         self._write({"t_ms": t_ms, "type": "file_event", **event})
         if self.snapshot_mgr.enabled:
             self.snapshot_mgr.notify_file_changed(t_ms)
+        self.software_mgr.notify_drain()
+
+    def _on_input_event(self, event):
+        """Runs on the hook / screenshot-worker thread right after the raw
+        event is written; notify_*() only sets a flag, never blocks."""
+        if event["type"] == "screenshot":
+            if event.get("kind") == "settle":
+                self.software_mgr.notify_observation()
+        elif event["type"] in ("mouse_down", "mouse_up", "scroll", "key_down", "key_up"):
+            self.software_mgr.notify_drain()
 
     def stop(self):
         self.input_rec.stop()
@@ -182,9 +205,13 @@ class Episode:
         screen.take_screenshot(final_shot)
         self._write({"t_ms": input_recorder.now_ms(), "type": "screenshot",
                      "path": f"screenshots/{final_idx:06d}.png", "kind": "settle"})
+        self.software_mgr.notify_observation()
         win = window.get_active_window()
         if win:
             self._write({"t_ms": input_recorder.now_ms(), "type": "window_active", **win})
+
+        # last get_actions()/get_events(), then detach() everything
+        self.software_mgr.stop()
 
         self.recorder.stop()
         self._write({"t_ms": input_recorder.now_ms(), "type": "recording_end"})
@@ -253,6 +280,9 @@ def main():
                          help="启用文件快照(默认开启)")
     parser.add_argument("--no-snapshot", dest="snapshot", action="store_false",
                          help="关闭文件快照功能")
+    parser.add_argument("--adapters", default="auto",
+                         help="软件适配器:auto(默认,按前台进程自动匹配)、none(禁用)、"
+                              "或逗号分隔的 adapters/ 子目录名,如 mock,autocad")
     args = parser.parse_args()
 
     if sys.platform != "win32":
@@ -265,15 +295,19 @@ def main():
     copy_task_file(args.task, episode_dir)
     print(f"[trajrec] episode 目录: {episode_dir}")
 
-    episode = Episode(episode_dir, args.watch, snapshot_enabled=args.snapshot)
-    write_meta(episode_dir, args.watch, episode.snapshot_mgr)
+    episode = Episode(episode_dir, args.watch, snapshot_enabled=args.snapshot, adapters=args.adapters)
+    write_meta(episode_dir, args.watch, episode.snapshot_mgr, episode.software_mgr)
     if not episode.snapshot_mgr.enabled:
         print(f"[trajrec] 文件快照未启用: {episode.snapshot_mgr.disabled_reason}")
+    if episode.software_mgr.enabled:
+        names = [a.name for a in episode.software_mgr.adapters] or "无"
+        print(f"[trajrec] 已加载软件适配器: {names}")
     episode.start()
 
     wait_for_stop()
 
     episode.stop()
+    write_meta(episode_dir, args.watch, episode.snapshot_mgr, episode.software_mgr)  # final adapter counters
     copy_artifacts(episode_dir, args.watch)
 
     print("[trajrec] 生成 trajectory.jsonl / trajectory.html ...")

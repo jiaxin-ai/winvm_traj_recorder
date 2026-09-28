@@ -1,0 +1,36 @@
+software: MockCAD
+spec_version: "1"
+software_version: "无(mock,用 notepad.exe 充当被适配的软件)"
+connection: "不连接任何软件;attach() 恒返回 True"
+
+state:
+  active_document:
+    type: string|null
+    source: "win32gui.EnumWindows 找到的第一个可见 notepad.exe 窗口标题"
+    meaning: "记事本窗口标题(不是文件绝对路径);非 Windows 或没有记事本窗口时为 null"
+  selection:
+    type: list
+    source: "常量"
+    meaning: "恒为空列表"
+  mode:
+    type: string
+    source: "常量"
+    values: ["idle"]
+    meaning: "恒为 idle"
+  action_count:
+    type: int
+    source: "适配器内部计数"
+    meaning: "到目前为止 get_actions() 产生的 action 条数"
+
+actions:
+  command:
+    source: "每次 get_actions() 被调用时现场生成一条;t_ms 为调用时刻,时间精度取决于 Recorder 的调用时机(真适配器不能这样做)"
+    params:
+      seq: {type: int, meaning: "action 序号,从 1 开始"}
+
+events:
+  command_executed:
+    source: "每次 get_events() 被调用时现场生成;t_ms 为调用时刻,时间精度同上"
+    params:
+      seq: {type: int, meaning: "event 序号,从 1 开始(name 为 MOCK_COMMAND 时)"}
+      index: {type: int, meaning: "仅 MOCK_FAULT=flood:本次 5000 条中的序号(name 为 MOCK_FLOOD 时)"}

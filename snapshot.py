@@ -65,7 +65,15 @@ def run_git(git_dir, work_tree, args, timeout=GIT_TIMEOUT_S, set_work_tree=True,
     allowed to have a work tree by definition). Every other call needs it.
 
     text=False exists for `git archive`, whose stdout is a binary tar
-    stream that must not be decoded."""
+    stream that must not be decoded.
+
+    git_dir/work_tree are resolved to absolute paths before use: this
+    call also sets the subprocess's own cwd to work_tree, so a *relative*
+    GIT_DIR/GIT_WORK_TREE would get re-resolved by git against that new
+    cwd instead of the caller's original one, silently producing a wrong
+    (sometimes doubled-looking) path."""
+    git_dir = Path(git_dir).resolve()
+    work_tree = Path(work_tree).resolve()
     env = dict(os.environ)
     env["GIT_DIR"] = str(git_dir)
     if set_work_tree:
@@ -120,8 +128,14 @@ class SnapshotManager:
     """
 
     def __init__(self, episode_dir, watch_dir, writer, enabled=True):
-        self.episode_dir = Path(episode_dir)
-        self.watch_dir = Path(watch_dir)
+        # Resolved to absolute right away: run_git() sets the git
+        # subprocess's cwd to watch_dir, so any *relative* path built from
+        # these later (e.g. finalize()'s repo.bundle path, passed as a
+        # plain git argument rather than an env var) would otherwise get
+        # silently re-resolved by git against that different cwd instead
+        # of the caller's original one.
+        self.episode_dir = Path(episode_dir).resolve()
+        self.watch_dir = Path(watch_dir).resolve()
         self.writer = writer
         self.requested_enabled = enabled
         self.enabled = False

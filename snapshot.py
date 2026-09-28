@@ -39,7 +39,7 @@ GITIGNORE_PATTERNS = [
 MILESTONE_FILE = Path(r"C:\ProgramData\trajrec\MILESTONE")
 MILESTONE_POLL_INTERVAL_S = 0.5
 
-QUIET_PERIOD_MS = 5000       # commit only after this long with no file events
+QUIET_PERIOD_MS = 3000       # commit only after this long with no file events
 QUIET_TIMEOUT_MS = 30000     # ...but never wait longer than this
 QUIET_POLL_INTERVAL_S = 0.2
 
@@ -384,16 +384,30 @@ def main():
     parser.add_argument("--episode-dir", required=True, help="episode 目录(用于放 snapshots/)")
     args = parser.parse_args()
 
-    class _FakeWriter:
+    class _JsonlWriter:
+        """Same on-disk format main.py's real writer uses, so this test
+        run's raw/events.jsonl can be fed straight into `python
+        trajectory.py <episode-dir>` and then `restore.py` afterward --
+        the whole chain is testable without running the full recorder."""
+
+        def __init__(self, path):
+            self._path = Path(path)
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+
         def write(self, event):
             print(json.dumps(event, ensure_ascii=False))
+            with self._path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     class _FakeObserver:
         last_event_ms = None
 
-    watch_dir = Path(args.watch)
+    watch_dir = Path(args.watch).resolve()
+    episode_dir = Path(args.episode_dir).resolve()
     watch_dir.mkdir(parents=True, exist_ok=True)
-    mgr = SnapshotManager(Path(args.episode_dir), watch_dir, _FakeWriter(), enabled=True)
+
+    writer = _JsonlWriter(episode_dir / "raw" / "events.jsonl")
+    mgr = SnapshotManager(episode_dir, watch_dir, writer, enabled=True)
     if not mgr.init_repo():
         print(f"[snapshot] 未启用: {mgr.disabled_reason}")
         return
@@ -417,7 +431,11 @@ def main():
             observer.stop()
             observer.join()
         mgr.finalize()
-        print("[snapshot] 已结束,repo.bundle 已生成")
+        meta = {"watch_dir": str(watch_dir), "snapshot": {"enabled": mgr.enabled, "reason": mgr.disabled_reason}}
+        (episode_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[snapshot] 已结束,repo.bundle 已生成。可以运行:\n"
+              f"    python trajectory.py {episode_dir}\n"
+              f"    python restore.py {episode_dir} --list")
 
 
 if __name__ == "__main__":

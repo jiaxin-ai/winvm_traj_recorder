@@ -70,7 +70,7 @@ python processes.py      # 打开/关闭一个程序(如记事本),看 start/exi
 python files.py --watch C:\task  # 在 C:\task 下新建/编辑/删除/改名文件,看事件是否正确
 python terminal.py <episode_dir>   # 写入标记文件后,按提示打开一个新 PowerShell 窗口执行几条命令,回车结束后检查 <episode_dir>\raw\terminal\ 下有没有生成 transcript
 python input_recorder.py # 综合测试:点击、拖拽、打字、按快捷键,看 raw_test\events.jsonl 里事件是否符合预期(这一步依赖 uia.py 和 screen.py,建议放在它们都验证过之后再测)
-python snapshot.py --watch C:\task --episode-dir C:\tmp\snap_test  # V1.1:在 C:\task 下新建/编辑文件,等 5 秒看是否自动 commit;回车触发一次 milestone;Ctrl+C 结束看 repo.bundle 是否生成
+python snapshot.py --watch C:\task --episode-dir C:\tmp\snap_test  # V1.1:在 C:\task 下新建/编辑文件,等 3 秒看是否自动 commit;回车触发一次 milestone;Ctrl+C 结束看 repo.bundle 是否生成
 ```
 
 ## 整体运行与停止
@@ -111,7 +111,7 @@ python trajectory.py C:\traj\20260922_103215
 
 | 触发 | 条件 | reason |
 |---|---|---|
-| 文件变更 | `--watch` 下有变化,且此后连续 5 秒没有新的文件事件(最长等 30 秒,超时仍提交并标记 `quiet_timeout`) | `file_changed` |
+| 文件变更 | `--watch` 下有变化,且此后连续 3 秒没有新的文件事件(最长等 30 秒,超时仍提交并标记 `quiet_timeout`) | `file_changed` |
 | 主动(milestone) | 见下面两种入口 | `milestone` |
 | 起止 | 录制开始、录制结束各一次 | `episode_start` / `episode_end` |
 
@@ -158,6 +158,7 @@ python restore.py <episode_dir> --step 12 --in-place --kill       # 同上,自�
 ### 已知限制
 
 - **软件里没保存的改动不在快照里**——本版完全不碰 COM/软件 API,快照只看磁盘上的文件,这是任务本身接受的限制。
+- **真正意义上的空文件夹不会被记录、也恢复不出来**——这是 git 本身的限制(git 只认文件,不单独追踪目录),不是这个工具的 bug。文件夹里只要有文件,文件夹本身会随着文件路径一起被正确恢复(已用嵌套两层的目录验证过);但如果某个空目录本身要求必须存在(比如某软件依赖一个空的输出目录),快照/恢复这块处理不了。
 - git 不可用,或初始化仓库失败,快照功能会自动关闭并继续正常录制(`meta.json` 里的 `snapshot.reason` 会记原因),不影响 V1 的其余采集。
 - 单个变更文件超过 200MB 时只会额外记一条警告事件,不做特殊处理(仍然正常提交)。
 

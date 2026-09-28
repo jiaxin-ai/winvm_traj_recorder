@@ -3,8 +3,10 @@
 
 Pure offline processing: reads raw/events.jsonl and raw/terminal/*, merges
 low-level events into actions, and writes trajectory.jsonl + trajectory.html
-into the episode directory. Imports nothing Windows-specific, so it runs the
-same way on macOS (for development/testing) and on the Windows VM.
+into <episode_dir>/traj/ (screenshots/recording.mp4 stay at the episode
+root; trajectory.html's <img>/<video> tags point back up at them). Imports
+nothing Windows-specific, so it runs the same way on macOS (for
+development/testing) and on the Windows VM.
 
 Usage:
     python trajectory.py output/<episode_id>
@@ -741,7 +743,7 @@ def _render_target_html(target):
     return _kv_table(pairs)
 
 
-def _render_action_html(action, sizes):
+def _render_action_html(action, sizes, asset_prefix):
     if action is None:
         return '<p class="empty">(结束,无动作)</p>'
     pairs = [("type", f"<b>{_esc(action['type'])}</b>")]
@@ -758,7 +760,7 @@ def _render_action_html(action, sizes):
     if shot:
         size = sizes.get(shot)
         overlay = _overlay_html(action, size) if size else ""
-        parts.append(f'<div class="shot-wrap"><img src="{_esc(shot)}" loading="lazy">{overlay}</div>')
+        parts.append(f'<div class="shot-wrap"><img src="{_esc(asset_prefix + shot)}" loading="lazy">{overlay}</div>')
     else:
         parts.append('<p class="empty">无截图</p>')
     return "".join(parts)
@@ -828,7 +830,7 @@ def _cursor_marker_html(cursor, img_size):
     return f'<div class="marker" style="left:{x / iw * 100:.3f}%; top:{y / ih * 100:.3f}%;"></div>'
 
 
-def _render_step_html(step, sizes):
+def _render_step_html(step, sizes, asset_prefix):
     obs = step["observation"] or {}
     action = step["action"]
     events = step["events"] or {"files": [], "processes": []}
@@ -846,7 +848,7 @@ def _render_step_html(step, sizes):
     # click-position + UIA-rect overlay belongs on action.screenshot.
     if shot:
         cursor_html = _cursor_marker_html(obs.get("cursor"), sizes.get(shot))
-        screenshot_html = f'<div class="shot-wrap"><img src="{_esc(shot)}" loading="lazy">{cursor_html}</div>'
+        screenshot_html = f'<div class="shot-wrap"><img src="{_esc(asset_prefix + shot)}" loading="lazy">{cursor_html}</div>'
     else:
         screenshot_html = '<p class="empty">无截图</p>'
 
@@ -872,7 +874,7 @@ def _render_step_html(step, sizes):
   </details>
   <details class="section" open>
     <summary>Action</summary>
-    <div class="section-body">{_render_action_html(action, sizes)}</div>
+    <div class="section-body">{_render_action_html(action, sizes, asset_prefix)}</div>
   </details>
   <details class="section" open>
     <summary>Events</summary>
@@ -904,7 +906,16 @@ def _render_task_card_html(episode_dir):
 </div>'''
 
 
-def render_html(steps, episode_dir: Path):
+def render_html(steps, episode_dir: Path, html_dir: Path):
+    """Writes trajectory.html into html_dir. Every path stored in a step
+    (screenshot paths, etc.) is relative to episode_dir, per the existing
+    trajectory.jsonl schema -- that doesn't change here. Since V1.1,
+    html_dir is a subdirectory of episode_dir (traj/), not episode_dir
+    itself, so asset_prefix is prepended to each <img>/<video> src the
+    HTML actually embeds, to point back at episode_dir/screenshots and
+    episode_dir/recording.mp4 from the new location."""
+    asset_prefix = "../" * len(html_dir.relative_to(episode_dir).parts)
+
     sizes = {}
     for s in steps:
         shots = [s["observation"].get("screenshot")]
@@ -919,11 +930,11 @@ def render_html(steps, episode_dir: Path):
     video_path = "recording.mp4"
     has_video = (episode_dir / video_path).exists()
     video_section_html = (
-        f'<video id="video" src="{video_path}" controls></video>' if has_video
+        f'<video id="video" src="{asset_prefix + video_path}" controls></video>' if has_video
         else '<p class="empty">recording.mp4 not found</p>'
     )
 
-    steps_html = "\n".join(_render_step_html(s, sizes) for s in steps)
+    steps_html = "\n".join(_render_step_html(s, sizes, asset_prefix) for s in steps)
     task_card_html = _render_task_card_html(episode_dir)
 
     cursor_icon = _load_cursor_icon()
@@ -1006,7 +1017,8 @@ function seek(t) {{
 </body>
 </html>
 """
-    (episode_dir / "trajectory.html").write_text(html_doc, encoding="utf-8")
+    html_dir.mkdir(parents=True, exist_ok=True)
+    (html_dir / "trajectory.html").write_text(html_doc, encoding="utf-8")
 
 
 # --------------------------------------------------------------------------
@@ -1037,7 +1049,9 @@ def generate(episode_dir: Path):
 
     steps = build_steps(raw_events, transcript_commands, snapshot_events, snapshot_enabled)
 
-    out_path = episode_dir / "trajectory.jsonl"
+    traj_dir = episode_dir / "traj"
+    traj_dir.mkdir(parents=True, exist_ok=True)
+    out_path = traj_dir / "trajectory.jsonl"
     with out_path.open("w", encoding="utf-8") as f:
         for s in steps:
             f.write(json.dumps(s, ensure_ascii=False) + "\n")
@@ -1048,7 +1062,7 @@ def generate(episode_dir: Path):
     (snapshots_dir / "index.json").write_text(
         json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    render_html(steps, episode_dir)
+    render_html(steps, episode_dir, traj_dir)
     return steps
 
 
@@ -1063,7 +1077,8 @@ def main():
         sys.exit(1)
 
     steps = generate(episode_dir)
-    print(f"[trajectory] {len(steps)} steps -> {episode_dir / 'trajectory.jsonl'}, {episode_dir / 'trajectory.html'}")
+    traj_dir = episode_dir / "traj"
+    print(f"[trajectory] {len(steps)} steps -> {traj_dir / 'trajectory.jsonl'}, {traj_dir / 'trajectory.html'}")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@
 
 | 文件 | 平台 | 做什么 |
 |---|---|---|
-| [trajectory.py](trajectory.py) | 跨平台(纯 stdlib) | 读取 `raw/events.jsonl` + `raw/terminal/*`,把底层事件合并成 8 种 action、划分 step、生成 `trajectory.jsonl` 和 `trajectory.html`。不依赖任何 Windows 模块,可在 macOS 上直接运行和调试。V1.1:额外读 `meta.json`,给每个 step 填 `snapshot` 字段,并生成 `snapshots/index.json`。 |
+| [trajectory.py](trajectory.py) | 跨平台(纯 stdlib) | 读取 `raw/events.jsonl` + `raw/terminal/*`,把底层事件合并成 8 种 action、划分 step、生成 `traj/trajectory.jsonl` 和 `traj/trajectory.html`(截图/录屏仍留在 episode 根目录,HTML 里用 `../` 指回去)。不依赖任何 Windows 模块,可在 macOS 上直接运行和调试。V1.1:额外读 `meta.json`,给每个 step 填 `snapshot` 字段,并生成 `snapshots/index.json`。 |
 | [uia.py](uia.py) | Windows | 封装 UIA 查询(`uiautomation` 库):`query_at_point(x,y)` 查坐标下的 element,`query_focused()` 查当前焦点 element,查询超过 2 秒或失败一律返回 `None`。 |
 | [screen.py](screen.py) | Windows | `take_screenshot(path)` 截整个虚拟桌面(mss);`Recorder` 类封装 ffmpeg(gdigrab)录屏进程的启动/优雅停止。 |
 | [window.py](window.py) | Windows | `get_active_window()` 取前台窗口标题+进程名(pywin32 + psutil);`poll_loop()` 轮询并在变化时回调。 |
@@ -31,11 +31,11 @@ pip install -r requirements.txt   # 在 macOS 上只会装 psutil/mss/watchdog,W
 python trajectory.py samples/demo_episode
 ```
 
-会在 `samples/demo_episode/` 下生成 `trajectory.jsonl`(10 step)和 `trajectory.html`。`trajectory.html` 用 `file://` 直接双击打开即可(截图和 UIA target 框会叠加在截图上,terminal 输出、file/process 事件都能看到);如果双击后截图不显示,大概率是浏览器把相对路径当成了跨域请求,可以本地起个静态服务器看效果:
+会在 `samples/demo_episode/traj/` 下生成 `trajectory.jsonl`(10 step)和 `trajectory.html`(截图仍在 `samples/demo_episode/screenshots/`,HTML 里用 `../screenshots/...` 引用)。`trajectory.html` 用 `file://` 直接双击打开即可(截图和 UIA target 框会叠加在截图上,terminal 输出、file/process 事件都能看到);如果双击后截图不显示,大概率是浏览器把相对路径当成了跨域请求,可以本地起个静态服务器看效果:
 
 ```bash
 cd samples/demo_episode && python3 -m http.server 8000
-# 浏览器打开 http://localhost:8000/trajectory.html
+# 浏览器打开 http://localhost:8000/traj/trajectory.html
 ```
 
 修改 `trajectory.py` 里的合并规则后,重新跑一遍上面的命令就能看到效果,不需要重新录制。
@@ -82,7 +82,7 @@ python main.py --output C:\traj --task task.json --watch C:\task
 - 启动后会打印 `[trajrec] 初始状态已记录,可以开始操作`,这之前的键鼠输入不算数。
 - 输出目录:`C:\traj\<episode_id>\`(`episode_id` 是启动时间,如 `20260922_103215`)。
 - **停止**:按 `Ctrl+C`,或者在另一个窗口/宿主机创建文件 `C:\ProgramData\trajrec\STOP`。
-- 停止后自动生成 `trajectory.jsonl`、`trajectory.html`,并把录制期间有变化的文件复制进 `artifacts/`。
+- 停止后自动在 `traj/` 子目录下生成 `trajectory.jsonl`、`trajectory.html`,并把录制期间有变化的文件复制进 `artifacts/`。
 - V1.1:文件快照默认开启,加 `--no-snapshot` 关闭。**`--output` 不能位于 `--watch` 之内**,否则启动时直接报错退出(轨迹数据会被快照吃进去)。所有要被快照的工程文件都必须放在 `--watch` 目录里,别的地方不会被快照。
 
 修改合并规则、想从 raw 数据重新生成轨迹(不用重新录制):
@@ -149,9 +149,15 @@ python restore.py <episode_dir> --step 12 --in-place              # 就地恢复
 python restore.py <episode_dir> --step 12 --in-place --kill       # 同上,自动结束相关软件进程
 ```
 
-也可以用 `--commit <hash>` 代替 `--step`;`--work-dir` 用来覆盖 `index.json` 里记录的原始工作目录路径(episode 数据被拷到别的机器上时需要)。
+也可以用 `--commit <hash>` 代替 `--step`。`--export` 不给具体目录时,默认导出到 `<episode_dir>\restore\restore_<commit>\`。
 
-**⚠️ 就地恢复(`--in-place`)前必须先关闭正在打开这些文件的软件**,否则它内存里还是恢复前的旧状态,下次它自己保存就会把刚恢复的文件又覆盖回去。不加 `--kill` 时会打印检测到的相关软件进程列表,等你手动关闭后按回车继续;加 `--kill` 会直接结束这些进程(等 3 秒让它们把锁文件/临时文件清理干净)。恢复后,任何"该版本之后才新建"的文件不会被删除,而是移进 `--watch\_discarded\<时间戳>\`。
+**`--work-dir` 是什么**:`restore.py` 要知道两样东西才能操作——git 仓库在哪(`<episode_dir>\snapshots\repo.git`,这个从 `episode_dir` 参数直接推出来,不用你管),以及**原始工作目录在哪**(也就是当初录制时 `main.py --watch` 指向的那个目录,`--in-place` 模式要恢复的就是这个目录本身)。后者默认从 `index.json` 里的 `work_dir` 字段读——`main.py` 录制时会把 `--watch` 的绝对路径写进 `meta.json`,再由 `trajectory.py` 抄进 `index.json`。`--work-dir` 就是让你手动覆盖这个值,用在两种场景:
+  1. 这份 episode 数据被拷贝/搬到了另一台机器,原来 `index.json` 里记的路径在这台机器上不存在了(比如原来是 `C:\task`,现在数据在别的电脑上,想恢复到 `D:\task_copy`)。
+  2. 导出模式(`--export`)其实**完全不需要** `work_dir` 里当前有什么内容——`git archive` 直接从仓库对象里取数据,不读工作目录的文件。之所以还是要求这个路径存在,只是因为 `run_git()` 需要一个目录作为 git 子进程的 `cwd`。所以导出模式下 `--work-dir` 可以随便指一个存在的空目录,不影响导出结果。
+
+**⚠️ 就地恢复(`--in-place`)前必须先关闭正在打开这些文件的软件**,否则它内存里还是恢复前的旧状态,下次它自己保存就会把刚恢复的文件又覆盖回去。不加 `--kill` 时会打印检测到的相关软件进程列表,等你手动关闭后按回车继续;加 `--kill` 会直接结束这些进程(等 3 秒让它们把锁文件/临时文件清理干净)。
+
+恢复后,任何"该版本之后才新建"的文件不会被删除,而是移进 `<work_dir>\_discarded\<时间戳>\`——**特意放在工作目录里而不是 episode_dir**,原因有两个:一是 task-v1.1.md 原文就是这么要求的("移动到 `<工作目录>\_discarded\<时间戳>\`");二是它已经被 `.gitignore` 排除,不会被以后的快照提交进去,同时又和被恢复的文件在同一个地方,方便你就地翻一下"这些新文件要不要留着"。
 
 导出模式(默认)只读 git 对象(`git archive`),完全不碰 `--watch` 目录,可以在任何机器上跑,常用来做验收、比对、生成训练数据。
 
@@ -209,3 +215,4 @@ python restore.py <episode_dir> --step 12 --in-place --kill       # 同上,自�
 18. **milestone 快捷键只吞 M 本身**:Ctrl/Alt/Shift 三个修饰键自己的 key_down/key_up 仍然正常写入轨迹(它们单独按不会触发专业软件的功能,保留下来对理解动作序列也无害),只有触发条件满足那一下 M 被吞掉、不进轨迹。
 19. **`restore.py` 不加 `--kill` 时的行为**:task-v1.1.md 写"提示先关闭,等待用户确认后再继续",理解为打印进程列表后 `input()` 阻塞等回车,而不是直接报错退出——用户手动关掉软件后回车即可继续,不用重新执行命令。
 20. **`restore.py --in-place` 判断"该版本之后新建的文件"**:没有用 `git status`(它检测不到"当前 HEAD 仍追踪、但目标版本没有"的文件,`git checkout -f <commit> -- .` 不会把这类文件从索引里摘掉),改成直接对比 `git ls-tree -r --name-only <commit>` 和工作目录实际文件列表,凡是磁盘上有、目标版本里没有的都移进 `_discarded`。
+21. **`trajectory.jsonl`/`trajectory.html` 放进 `<episode_dir>/traj/` 子目录**:这不是 task.md 或 task-v1.1.md 的要求,两份任务文档原本都是直接放在 episode 根目录(`samples/demo_episode/` 早先的示例结构、`main.py` 的原始实现都是这样)。是按沟通中的要求改的,之后 `<episode_dir>` 根目录只剩 `task.json`、`meta.json`、`raw/`、`screenshots/`、`recording.mp4`、`snapshots/`、`artifacts/` 这些"原始数据",`traj/` 单独放"处理后的产物"。截图和录屏**没有**跟着挪(它们本来就是 `raw/events.jsonl` 记录路径的来源,挪动会牵连更大),`trajectory.html` 里的 `<img>`/`<video>` 换成了 `../` 前缀指回去;但 `trajectory.jsonl` 里存的 `screenshot` 字段路径值本身不变,仍然是相对 `episode_dir`(不是相对 `traj/`)——这是为了不改 V1 的 JSONL schema 语义,只挪文件本身的存放位置。`restore.py` 读 `trajectory.jsonl` 的路径已同步改成 `<episode_dir>/traj/trajectory.jsonl`。

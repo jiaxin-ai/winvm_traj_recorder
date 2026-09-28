@@ -51,7 +51,7 @@ def load_index(episode_dir):
 
 
 def load_trajectory_steps(episode_dir):
-    path = Path(episode_dir) / "trajectory.jsonl"
+    path = Path(episode_dir) / "traj" / "trajectory.jsonl"
     steps = []
     if not path.exists():
         return steps
@@ -221,7 +221,8 @@ def main():
     parser.add_argument("--list", action="store_true", help="列出所有版本")
     parser.add_argument("--step", type=int, help="按 step_id 定位版本")
     parser.add_argument("--commit", help="按 commit hash 定位版本(可代替 --step)")
-    parser.add_argument("--export", metavar="DIR", help="导出到指定目录(默认行为;不给目录时导出到 ./restore_<commit>)")
+    parser.add_argument("--export", metavar="DIR",
+                         help="导出到指定目录(默认行为;不给目录时导出到 <episode_dir>/restore/restore_<commit>)")
     parser.add_argument("--in-place", action="store_true", help="就地恢复工作目录(会覆盖当前文件,谨慎使用)")
     parser.add_argument("--kill", action="store_true", help="就地恢复时自动结束相关软件进程")
     parser.add_argument("--work-dir", help="覆盖 index.json 里记录的工作目录路径(episode 数据被拷到别的机器时需要)")
@@ -260,7 +261,7 @@ def main():
         work_dir.mkdir(parents=True, exist_ok=True)
         restore_in_place(git_dir, work_dir, commit, args.kill)
     else:
-        target = args.export or f"./restore_{commit}"
+        target = args.export or (episode_dir / "restore" / f"restore_{commit}")
         export_commit(git_dir, work_dir, commit, target)
 
 

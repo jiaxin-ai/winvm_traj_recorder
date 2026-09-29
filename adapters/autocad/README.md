@@ -2,7 +2,7 @@
 
 按 [适配器规范](../software_trajectory_collector_specification.md) 实现,连接**已在运行**的 AutoCAD,只读地提供 state / action / event 三类记录。设计细节、每个字段的来源和逐项验收表见 [task-adapter-autocad.md](task-adapter-autocad.md)。
 
-> **状态：用户已在 Windows + AutoCAD 2026 上报告基础 state 测试通过；COM 事件与日志实时采集仍待复测。** 2026-09-29 修订了事件 sink 接口包装、EN 日志支持、AutoCAD Unicode 转义解析及 CLI 输出编码。真实日志离线解析和 5 项回归测试通过，不代表 Windows COM 回调已验证。详见 [测试记录](windows-test-notes.md)。
+> **当前状态：Windows 实测中，事件订阅成功后运行 `--watch` 并绘制 LINE 导致 AutoCAD 访问冲突崩溃（AC-005）。当前已暂停全部 COM 事件订阅，固定使用 B 级（状态查询＋日志），适用于独立调试和 Recorder。** 这只是临时隔离，崩溃根因和降级后的稳定性尚未实测确认；不能宣称适配器验收通过。基础 state 测试此前由用户报告通过，当前 7 项离线回归通过。详见 [测试记录](windows-test-notes.md)。
 
 ## 文件
 
@@ -130,7 +130,7 @@ python -m adapters.autocad --watch              # 每 500 ms 打印 get_actions(
 - 模块顶层只导入标准库。pywin32 在 `attach()` 里、在适配器线程上导入,并临时设置 `sys.coinit_flags = 0`,避免首次 `import pythoncom` 把该线程初始化成 STA。
 - 事件回调运行在 COM 的 RPC 线程上,只做"打时间戳 + 追加到 deque"。所有对 AutoCAD 的查询都在适配器线程里做,包括读取新对象的 `ObjectName` / `Handle`。
 
-## 2026-09-29 修复后的复测
+## 2026-09-29 订阅修复后的历史复测（已因 AC-005 暂停）
 
 更新 Windows 上的 `adapter.py` 后，在 PowerShell 执行：
 
@@ -140,8 +140,14 @@ python -m adapters.autocad --probe 2>&1 | Tee-Object -FilePath autocad-probe-fix
 python -m adapters.autocad --watch 2>&1 | Tee-Object -FilePath autocad-watch-fixed.txt
 ```
 
-CLI 自行设置 UTF-8 输出，PowerShell 仍需对应解码。probe 应达到 events=on / log=on；实际画线后必须收到命令和对象事件才算事件修复通过。失败时保存完整 traceback（包含订阅阶段及 IID）。
+CLI 自行设置 UTF-8 输出，PowerShell 仍需对应解码。上述为 AC-005 发生前的测试命令；现在不要继续旧版 events=on 的 watch 测试。当前 probe 应为 level=B / events=off(AC-005 原因)，日志已开启时 log=on。保留已有崩溃前终端输出用于诊断。
 
 日志先解析 `\U+XXXX` 转义，再识别中英文提示，raw 保留原行；取消优先于命令识别。EN 不等同于英文日志：更正后的 EN 样例含中文转义和 cp1252 引号，EN 的非 UTF-8 回退使用 cp1252；旧样例中的第三方插件 GBK 文本可能乱码，不参与命令匹配。命令参数解析保持关闭。
 
 离线回归：`python -m unittest adapters.autocad.test_regressions -v`。用户更正后的样例包含 ZZZ_NONEEXISTENT 未知命令和 LINE 取消，二者均已通过离线事件生成检查；实时采集仍需 Windows 复测。
+
+## AC-005 临时隔离的能力边界
+
+`COM_EVENTS_ENABLED=False`：attach 不订阅 Application / Document 事件，`_advise` 也拒绝订阅。没有新增 Recorder 接口、后台线程或对 AutoCAD 的写操作。原有 COM 事件实现保留待诊断，不能因 constants 可编辑就视为已验证可重新启用。
+
+当前可用路径：state 查询；日志已启用时的 command、command_cancelled、error_raised（时间戳取读到日志时刻）。不会产生 COM 来源的对象、选择、文档生命周期、command_executed、undo/redo 或 LISP 事件，也不提供 api_call。日志实时刷新和降级后的稳定性仍待 Windows 验证。

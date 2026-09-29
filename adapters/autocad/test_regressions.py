@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from adapters.autocad.adapter import LOG_ANSI_ENCODING, LOG_PATTERNS, LogParser, LogTail, _Sink
+from adapters.autocad.adapter import Adapter, LOG_ANSI_ENCODING, LOG_PATTERNS, LogParser, LogTail, _Sink
 
 
 class LogTests(unittest.TestCase):
@@ -64,6 +64,32 @@ class LogTests(unittest.TestCase):
 
 
 class SinkTests(unittest.TestCase):
+    def test_crash_quarantine_skips_subscription_for_both_apartment_modes(self):
+        for mta in (True, False):
+            adapter = Adapter()
+            with patch.object(adapter, "_setup_events") as setup:
+                adapter._configure_events(mta)
+                setup.assert_not_called()
+            self.assertFalse(adapter._events_on)
+            self.assertIn("AC-005", adapter._events_off_reason)
+            # Reject even an accidental direct subscription attempt.
+            with self.assertRaisesRegex(RuntimeError, "AC-005"):
+                adapter._advise(None, None, None, None)
+
+    def test_log_actions_and_errors_remain_available_without_com_events(self):
+        adapter = Adapter()
+        adapter._configure_events(True)
+        parser = LogParser(LOG_PATTERNS["EN"])
+        for line in ("命令: LINE", "指定第一个点: *取消*",
+                     '未知命令“ZZZ_NONEEXISTENT”。'):
+            parsed = parser.parse(line)
+            if parsed:
+                adapter._on_log_line(123, parsed, parser, line)
+        actions = adapter._actions.take()
+        events = adapter._events.take()
+        self.assertEqual([(a["name"], a["source"]) for a in actions], [("LINE", "log")])
+        self.assertEqual([e["type"] for e in events], ["command_cancelled", "error_raised"])
+
     def test_custom_iid_returns_dispatch_wrapper_and_callback_enqueues(self):
         raw = collections.deque()
         sink = _Sink("event-iid", {1: "BeginCommand"}, {"BeginCommand"}, raw, None)

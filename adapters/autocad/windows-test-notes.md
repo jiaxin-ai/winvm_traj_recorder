@@ -90,3 +90,13 @@ $env:PYTHONIOENCODING = "utf-8"
 用户提供 Drawing1_1de6ed425.log，含实际输入 ZZZ_NONEEXISTENT 及 LINE 后取消。未知命令行的引号是原始 0x93 / 0x94（cp1252），中文为 ASCII Unicode 转义。先前根据旧文件第三方插件 GBK 文本选择 EN→GBK 会破坏引号和相邻命令字符，已改为 EN→cp1252。旧文件可能混有第三方插件采用不同编码的输出，不据此判断核心命令日志编码。
 
 更正后的完整原始文件经当前 LogTail → LogParser → _on_log_line 离线验证：生成 error_raised(kind=unknown_command, command=ZZZ_NONEEXISTENT) 和 command_cancelled(command=LINE)。新增 cp1252 引号/转义/分块读取回归，5 项测试通过。raw 保留转义文本。Windows 实时日志读取及 COM 回调仍待复测；应重新复制最新 adapter.py 后再 probe/watch。
+
+## AC-005：watch 期间 AutoCAD 访问冲突崩溃（阻塞，尚未修复根因）
+
+用户先提供 probe 成功截图：attach 127 ms、get_state 4.6 ms，level=A / events=on / log=on。随后报告：不运行 watch 时操作正常；运行 watch 后输入命令会崩溃。截图为 LINE 输入第一个点 100,100 后，AutoCAD 弹出 `Unhandled Access Violation Reading 0x0000 Exception at 66C996B8h`。尚无原始 watch 输出或崩溃 dump，不能确定故障调用栈。
+
+这推翻了“事件功能已修好”的结论：目前只验证过订阅成功。可能涉及事件 gateway、回调中得到的 COM 对象跨线程保留/读取、查询与事件的交互；这些只是排查方向，并非已证实根因。Autodesk 说明事件常发生于命令处理中，事件处理有约束，但官方资料本身不能定位此崩溃：https://help.autodesk.com/cloudhelp/2021/ENU/AutoCAD-ActiveX/files/GUID-2FF2F1B5-FFAC-420A-A741-15D1FC1A571E.htm
+
+临时隔离：COM_EVENTS_ENABLED=False；attach 跳过 Application / Document 订阅，_advise 也禁止订阅。CLI 和 Recorder 同样生效，不修改 Recorder 主体。保留 state 与日志 B 级路径，不把此措施称作根因修复或保证不会崩溃。
+
+7 项离线回归通过：新增检查两种 apartment 条件下均不调用订阅、直接订阅被拦截、日志 command/cancel/error 仍能输出。Windows 降级后稳定性未验证。下一份所需证据为本次崩溃前已有的 autocad-watch-fixed.txt 或完整 PowerShell 输出；不要求重新运行旧版以复现。

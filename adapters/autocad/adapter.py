@@ -41,6 +41,13 @@ import types
 
 NAME = "AutoCAD"
 
+# Windows acceptance found an AutoCAD access violation while drawing with
+# the event subscriber attached. Quarantine both Application and Document
+# subscriptions until the crash is diagnosed; this also applies in Recorder.
+# State queries and the read-only command log remain available (level B).
+COM_EVENTS_ENABLED = False
+COM_EVENTS_DISABLED_REASON = "已报告 AutoCAD 访问冲突崩溃，暂时停用 COM 事件订阅（AC-005）"
+
 
 def _now_ms():
     return time.time_ns() // 1_000_000
@@ -653,6 +660,21 @@ class Adapter:
             return False
         version = self._prop(self._app, "app", "Version")
 
+        self._configure_events(mta)
+        self._rescan(initial=True)
+        self._init_active_doc_caches()
+
+        level = "A" if self._events_on else "B"
+        self._log(f"attach 成功: AutoCAD {version} PID {self._pid} level={level} "
+                  f"events={'on' if self._events_on else 'off(' + str(self._events_off_reason) + ')'} "
+                  f"log={'on' if self._log_on else 'off(' + str(self._log_reason) + ')'} "
+                  f"locale={self._locale} documents={len(self._docs)}")
+        return True
+
+    def _configure_events(self, mta):
+        if not COM_EVENTS_ENABLED:
+            self._events_off_reason = COM_EVENTS_DISABLED_REASON
+            return
         if mta:
             try:
                 self._setup_events()
@@ -664,15 +686,6 @@ class Adapter:
             except Exception as exc:
                 self._events_off_reason = f"订阅 COM 事件失败: {exc!r}"
                 self._log(traceback.format_exc().rstrip())
-        self._rescan(initial=True)
-        self._init_active_doc_caches()
-
-        level = "A" if self._events_on else "B"
-        self._log(f"attach 成功: AutoCAD {version} PID {self._pid} level={level} "
-                  f"events={'on' if self._events_on else 'off(' + str(self._events_off_reason) + ')'} "
-                  f"log={'on' if self._log_on else 'off(' + str(self._log_reason) + ')'} "
-                  f"locale={self._locale} documents={len(self._docs)}")
-        return True
 
     def _setup_events(self):
         pc = self._pc
@@ -719,6 +732,8 @@ class Adapter:
         return found
 
     def _advise(self, disp, iface, handled, doc_key):
+        if not COM_EVENTS_ENABLED:
+            raise RuntimeError(COM_EVENTS_DISABLED_REASON)
         iid, names = iface
         stage = "wrap sink"
         try:

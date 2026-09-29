@@ -1,3 +1,7 @@
+# AC-005 当前运行限制：全部 COM 事件订阅已停用，固定 B 级。
+# 下列 com_event 来源均为保留实现的条件能力，当前版本不可用。
+# 当前仅 state 与 log 来源 command / command_cancelled / error_raised 可用；
+# 日志实时刷新及降级后的 Windows 稳定性仍待验证。
 software: AutoCAD
 spec_version: "1"
 software_version: "目标 AutoCAD 2026 简体中文版 (R25.1);基础 state 已由用户在 Windows 上实测通过；事件和日志修复待复测。实际版本见 raw/adapters.log 中 attach 成功那一行"
@@ -9,7 +13,8 @@ connection: >-
   sink 由 AutoCAD 类型库在内存中构建(不生成 makepy 缓存);
   查询前用 SendMessageTimeout(WM_NULL, 100 ms) 探测 AutoCAD 主线程是否响应;
   命令行日志需操作者预先设置 LOGFILEMODE=1(适配器不修改)。
-  运行级别 A = COM 事件 + 查询 (+ 日志);B = 仅查询 (+ 日志),见 README
+  因 AC-005（watch 期间 AutoCAD 访问冲突）暂时禁止所有 COM 事件订阅，固定 B = 查询 (+ 日志)。
+  下列 com_event 能力当前不可用；事件实现保留待修复，见 README
 
 state:
   active_document:

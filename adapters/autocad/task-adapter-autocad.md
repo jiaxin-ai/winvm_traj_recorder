@@ -1,3 +1,5 @@
+> **AC-005 最新状态（覆盖下文历史方案）：** 用户实测 probe 达到 level=A/events=on/log=on，但 watch 中执行 LINE 导致 AutoCAD `Unhandled Access Violation Reading 0x0000`。已暂时停用全部 COM 事件订阅，固定使用 B 级；主方案没有通过验收。根因未确定，不能把订阅成功或离线测试通过视为回调安全性验证。需要崩溃前完整 watch 输出定位；不要求用户反复复现旧路径。
+
 > 2026-09-29 修订：以下历史待验证标记以 [windows-test-notes.md](windows-test-notes.md) 最新记录为准。用户已报告基础 state 测试通过。事件 sink 改用 `_query_interface_` 返回 IDispatch wrapper（参考 pywin32 genpy 的 sink）；仍保持默认策略，避免回调内转换对象。日志接受 EN，并按实际行内容识别中英文；解析前还原 AutoCAD Unicode 转义，取消优先于 command。EN 的 ANSI 回退按更正后的真实样例设为 cp1252（中文转义、cp1252 引号）；旧日志第三方插件的 GBK 文本不用于判断命令日志编码。命令参数仍关闭；当前样例不足以启用。新增 `test_regressions.py`，Windows 事件修复待复测。
 
 # AutoCAD 适配器开发文档

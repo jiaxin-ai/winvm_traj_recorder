@@ -1,3 +1,5 @@
+> 2026-09-29 修订：以下历史待验证标记以 [windows-test-notes.md](windows-test-notes.md) 最新记录为准。用户已报告基础 state 测试通过。事件 sink 改用 `_query_interface_` 返回 IDispatch wrapper（参考 pywin32 genpy 的 sink）；仍保持默认策略，避免回调内转换对象。日志接受 EN，并按实际行内容识别中英文；解析前还原 AutoCAD Unicode 转义，取消优先于 command。EN 的 ANSI 回退按更正后的真实样例设为 cp1252（中文转义、cp1252 引号）；旧日志第三方插件的 GBK 文本不用于判断命令日志编码。命令参数仍关闭；当前样例不足以启用。新增 `test_regressions.py`，Windows 事件修复待复测。
+
 # AutoCAD 适配器开发文档
 
 依据:`adapters/software_trajectory_collector_specification.md`(下称"规范")。接口、记录格式、约束以规范为准,本文只规定 AutoCAD 适配器怎么实现。接口形态参照 `adapters/mock/`;Recorder 侧行为见 `software.py` 与 `task-v1.2.md`。
@@ -79,7 +81,7 @@ pywin32 的 `DispatchWithEvents` / `WithEvents` 需要 makepy 生成的包装模
 1. `tlb, _ = app._oleobj_.GetTypeInfo().GetContainingTypeLib()`。
 2. 遍历 `tlb` 中 `TKIND_COCLASS` 类型,按名称找到 `AcadApplication` 和 `AcadDocument` **[文档:coclass 名称;待验证类型库中的实际名称]**。
 3. 在 coclass 的实现接口中找 `IMPLTYPEFLAG_FSOURCE | IMPLTYPEFLAG_FDEFAULT` 的那个,取其 `ITypeInfo`:得到事件接口 IID(预期名为 `_DAcadApplicationEvents` / `_DAcadDocumentEvents`,不硬编码),并从每个 `FUNCDESC.memid` + `GetNames(memid)[0]` 得到 `{dispid: 事件名}`。
-4. 构造 sink 对象:`_com_interfaces_ = [iid]`,`_public_methods_ = []`,`_dispid_to_func_` 把**事件接口的全部 dispid** 映射到方法:关心的事件映射到对应处理函数,其余映射到空函数 `_noop`(避免未知 dispid 向 AutoCAD 返回 `DISP_E_MEMBERNOTFOUND`)。
+4. 构造 sink 对象:`_com_interfaces_ = []`，`_query_interface_` 在请求事件 IID 时返回 `wrap(self)`,`_public_methods_ = []`,`_dispid_to_func_` 把**事件接口的全部 dispid** 映射到方法:关心的事件映射到对应处理函数,其余映射到空函数 `_noop`(避免未知 dispid 向 AutoCAD 返回 `DISP_E_MEMBERNOTFOUND`)。
 5. `wrapped = win32com.server.util.wrap(sink)`(使用默认 `DesignatedWrapPolicy`,参数以原始 `PyIDispatch` 传入;**不用** `EventHandlerPolicy`,它会在回调内对 IDispatch 参数调 `GetTypeInfo`,即回调内反向调用 AutoCAD)。
 6. `cp = obj._oleobj_.QueryInterface(pythoncom.IID_IConnectionPointContainer).FindConnectionPoint(iid)`;`cookie = cp.Advise(wrapped)`。保存 `(cp, cookie)`,detach 时 `cp.Unadvise(cookie)`。
 
@@ -352,7 +354,7 @@ AutoCAD 主线程忙(打开大图、重生成、长命令)时,跨进程 COM 调�
 
 ### 6.4 其他语言
 
-`LOCALE` 不是 `CHS` 或 `ENU` 时日志层关闭,`ctx.log` 说明原因。COM 事件不受影响。
+`LOCALE` 不是 `CHS`、`ENU` 或 `EN` 时日志层关闭,`ctx.log` 说明原因。COM 事件不受影响。
 
 ### 6.5 操作者如何打开命令行日志(录制前做一次)
 

@@ -1,0 +1,92 @@
+# Windows + AutoCAD 首轮测试记录
+
+记录日期：2026-09-29。证据来自用户在对话中提供的 Windows 截图及后续测试反馈；本地未运行 AutoCAD。尚未取得完整 probe 输出、原始命令日志或 Recorder episode。本文不表示完整验收通过。
+
+## 当前环境与结果
+
+- Windows，Python 3.10，pywin32 310，psutil 7.2.2（截图所示）。
+- AutoCAD 窗口标题为 2026；probe 返回版本 `25.1s (LMS Tech)`、`LOCALE=EN`。
+- 最新 probe：`attach -> True (125 ms)`；`get_state (3.9 ms)`。
+- 截图状态返回 `Drawing1.dwg`、`idle`、空选择、实体数 0、文档数 1；后续用户报告已完成上一轮给出的状态测试且全部通过，详见下文。
+- 当前 `level=B`、`events=off`、`log=off`、`log_files=[]`，只能确认状态查询链路可用，不能确认 action/event 采集。
+- 用户报告 100 次查询耗时与 read-only check 通过；尚未收到完整文本，不记录未经提供的 min/max 数值。
+
+## 用户反馈：状态查询测试通过
+
+用户在收到上一轮测试步骤后回复“我全部测完了都通过了”。按该轮明确列出的范围记录为用户实测通过：
+
+- `--probe --repeat 100`：max <500 ms，SelectionSets.Count / DBMOD 前后一致。
+- LINE 创建两段线后，entity_count 相对增加 2。
+- 选中一条线后，selection_count=1，selection 含 AcDbLine(handle)。
+- 保存后 active_document 为实际保存路径，未继续修改时 unsaved_changes=false。
+- 切换图层、布局、图纸后，对应 state 字段符合实际。
+
+这些结果不代表 COM 事件、日志解析或 Recorder 完整集成通过；AC-002 / AC-003 仍待修。模态对话框、批量选择等未在上一轮具体操作清单中要求的项目，也不自动标记为通过。
+
+## 问题清单
+
+### AC-001：终端输出编码（已通过环境设置绕过，代码未修）
+
+最初经 PowerShell 管道打印含中文的 summary 时，在 cp1252 编码处抛出 UnicodeEncodeError。设置 Python 输出 UTF-8 后不再崩溃，但管道显示乱码；统一 PowerShell 解码后，最新截图中文字正常。
+
+当前窗口使用：
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+```
+
+后续处理：完善调试入口的输出编码兼容性及 README。需在未设置这些环境项的新 PowerShell 窗口回归。
+
+### AC-002：COM 事件订阅失败（阻塞）
+
+实际输出：`订阅 COM 事件失败: (-2147467262, 'No such interface supported', None, None)`。
+
+连接成功，但事件订阅失败并进入 B 级。当前信息不能定位是取得连接点接口、查询事件连接点还是 Advise 的哪一步失败。
+
+后续处理：增加分阶段诊断和异常堆栈，定位 `_setup_events` / `_advise` 的失败位置后修复。修复后不仅要求 events=on，还要用 LINE 验证 BeginCommand、EndCommand、ObjectAdded 实际送达。
+
+受影响：命令、对象增删改、选择变化、文档生命周期等 COM 事件验收；批量事件限流、事件时间戳和完整 Recorder 事件链路先标为阻塞，不逐项记作独立缺陷。
+
+### AC-003：实际 LOCALE=EN 未匹配日志规则（阻塞）
+
+实际输出：`log=off(LOCALE=EN 没有对应的日志解析规则)`，`log_files=[]`。
+
+当前实现只匹配 CHS / ENU。需取得 LOGFILENAME 指向的原始文件，核对日志实际语言、编码、行格式后修正语言映射；不应仅根据界面语言或 EN 字符串直接认定日志语言。
+
+受影响：日志来源 command（B 级）、command_cancelled、error_raised。修复后需重新 attach，并用未知命令与 LINE + Esc 验证真实记录。
+
+## 状态测试清单（上述项目已由用户报告通过，其余保留待测）
+
+1. 空闲状态运行 `--probe --repeat 100`，保存完整输出；max <500 ms；无人操作时 SelectionSets.Count 和 DBMOD 前后相同。
+2. 空图用 LINE 创建两段线，结束命令后重新 probe：模型空间实体数相对增加 2。
+3. 无命令执行时选中一条线，重新 probe：selection_count=1，selection 含 AcDbLine(handle)。需要核对切换终端后 AutoCAD 是否保留选择。
+4. 保存图纸到已知路径，再 probe：active_document 为该路径；未继续修改时 unsaved_changes=false。
+5. 切换当前图层、布局、文档后分别 probe，核对对应字段；结果以实际图纸内容为准。
+6. 打开模态对话框时 probe，检查 get_state 能否在 500 ms 内返回 busy/dialog；关闭后重新 probe 应恢复。
+7. 保存完整 probe 的只读检查结果。既有 unsaved_changes=true 不能单独证明适配器有写操作。
+
+可以补测 Recorder 的 state 落盘与正常停止，但 action/event 和完整集成验收仍受 AC-002 / AC-003 阻塞。建议完成以上状态检查后集中修复两个阻塞项，再执行开发文档第 10 节完整验收。
+
+## 待收集证据
+
+- probe / probe --repeat 100 的完整文本，包括 per-field ms 和 read-only check。
+- AutoCAD 的 LOGFILENAME 指向的原始日志文件（不要打开后另存）。
+- 修复后 watch 输出及 Recorder episode，包含 raw/software_*.jsonl、raw/adapters.log、meta.json、trajectory.jsonl。
+
+## 2026-09-29 收到真实日志后的修订
+
+已读取用户提供的 Drawing1_1c1288f9e.log。无 BOM，含 GBK 文本及 AutoCAD Unicode 转义；命令提示实际为中文，不能把 LOCALE=EN 直接当作英文。样例可解析 LOGFILEMODE、取消和 QUIT，没有 LINE / ZZZ_NONEXISTENT。
+
+- AC-001：CLI 已设置 UTF-8 和 backslashreplace；summary 输出纳入 finally 的清理保护。Windows 新进程复测待完成，PowerShell 解码设置仍需要保留。
+- AC-002：按 pywin32 genpy 的 `_query_interface_` 模式修订 sink，避免请求未知原生事件接口 gateway。新增 wrap / QueryInterface / FindConnectionPoint / Advise 阶段日志与完整堆栈。此为有源码依据的候选修复，真实失败位置和 Windows 回调送达仍待复测。参考：https://github.com/mhammond/pywin32/blob/main/com/win32com/client/genpy.py
+- AC-003：接受 EN；按实际行内容识别中英文；匹配前还原 Unicode 转义；raw 保留原行；EN 的 ANSI 回退依据当前样例为 GBK，其他环境仍待验证。
+- AC-004：修复 `命令: *取消*` 被当作 command 的优先级问题。
+
+验证：4 项 unittest 通过（真实样例形式、合成中英文错误、分块读取、sink 查询和入队逻辑）；用户原始文件离线解析通过。以上不代替 Windows COM/日志实时验证。
+
+## 用户更正日志后的结论（取代前述 EN→GBK 判断）
+
+用户提供 Drawing1_1de6ed425.log，含实际输入 ZZZ_NONEEXISTENT 及 LINE 后取消。未知命令行的引号是原始 0x93 / 0x94（cp1252），中文为 ASCII Unicode 转义。先前根据旧文件第三方插件 GBK 文本选择 EN→GBK 会破坏引号和相邻命令字符，已改为 EN→cp1252。旧文件可能混有第三方插件采用不同编码的输出，不据此判断核心命令日志编码。
+
+更正后的完整原始文件经当前 LogTail → LogParser → _on_log_line 离线验证：生成 error_raised(kind=unknown_command, command=ZZZ_NONEEXISTENT) 和 command_cancelled(command=LINE)。新增 cp1252 引号/转义/分块读取回归，5 项测试通过。raw 保留转义文本。Windows 实时日志读取及 COM 回调仍待复测；应重新复制最新 adapter.py 后再 probe/watch。

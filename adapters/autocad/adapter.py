@@ -107,7 +107,8 @@ STATE_FIELDS = ("active_document", "selection", "selection_count", "selection_tr
                 "document_count", "unsaved_changes", "read_only", "view_center", "view_height")
 
 # -- command-line log patterns (task-adapter-autocad.md 6.3) -------------------
-# Candidates written from the UI text, not yet checked against real log files.
+# Chinese prompt/cancellation escapes checked against a Windows log sample.
+# Unknown-command and LISP-error patterns still require live validation.
 _C = "[:：]"
 LOG_PATTERNS = {
     "CHS": {
@@ -137,6 +138,15 @@ LOG_INPUT_RULE = {"CHS": False, "ENU": False}
 # page of AutoCAD's UI language, not the Windows system code page (the two
 # can differ, e.g. Chinese AutoCAD on an English Windows).
 LOG_ANSI_ENCODING = {"CHS": "gbk", "ENU": "cp1252"}
+# Observed EN installation writes Chinese escaped prompts and cp1252 quotes.
+# Parse prompt language from each line rather than assuming EN means English.
+LOG_PATTERNS["EN"] = LOG_PATTERNS["ENU"]
+LOG_ANSI_ENCODING["EN"] = "cp1252"
+LOG_INPUT_RULE["EN"] = False
+
+
+def decode_log_escapes(line):
+    return re.sub(r"\\U\+([0-9A-Fa-f]{4})", lambda m: chr(int(m.group(1), 16)), line)
 
 
 # -- pure helpers (no pywin32; checked on macOS) -------------------------------
@@ -335,10 +345,20 @@ class LogParser:
         self.command = None
 
     def parse(self, line):
-        s = line.strip()
+        s = decode_log_escapes(line).strip()
         if not s:
             return None
         p = self.p
+        # LOCALE can describe a different language than the actual log text.
+        for candidate in (LOG_PATTERNS["CHS"], LOG_PATTERNS["ENU"]):
+            if any(candidate[k].search(s) for k in ("command", "idle", "cancel", "unknown", "lisp_error")):
+                p = candidate
+                self.p = p
+                break
+        # Check cancellation first: "命令: *取消*" also matches command.
+        if p["cancel"].search(s):
+            cmd, self.command = self.command, None
+            return ("cancel", cmd)
         m = p["command"].match(s)
         if m:
             self.command = normalize_command(m.group(1))
@@ -346,9 +366,6 @@ class LogParser:
         if p["idle"].match(s):
             self.command = None
             return None
-        if p["cancel"].search(s):
-            cmd, self.command = self.command, None
-            return ("cancel", cmd)
         m = p["unknown"].match(s)
         if m:
             return ("unknown_command", m.group(1).strip())
@@ -378,7 +395,8 @@ class _Sink:
     arrive raw (PyIDispatch for objects); nothing here calls AutoCAD."""
 
     def __init__(self, iid, dispid_names, handled, raw, doc_key):
-        self._com_interfaces_ = [iid]
+        self._event_iid = iid
+        self._com_interfaces_ = []
         self._public_methods_ = []
         self._dispid_to_func_ = {}
         for dispid, event_name in dispid_names.items():
@@ -388,6 +406,14 @@ class _Sink:
             else:
                 func = "_noop"
             self._dispid_to_func_[dispid] = func
+
+    def _query_interface_(self, iid):
+        # Match pywin32 genpy's event sink: return an IDispatch gateway for
+        # the custom dispinterface, not a native gateway for its unknown IID.
+        if iid == self._event_iid:
+            from win32com.server.util import wrap
+            return wrap(self)
+        return None
 
     def _noop(self, *args):
         return None
@@ -634,8 +660,10 @@ class Adapter:
                 if _hresult(exc) in DEAD_HRESULTS:
                     raise
                 self._events_off_reason = f"订阅 COM 事件失败: {exc}"
+                self._log(traceback.format_exc().rstrip())
             except Exception as exc:
                 self._events_off_reason = f"订阅 COM 事件失败: {exc!r}"
+                self._log(traceback.format_exc().rstrip())
         self._rescan(initial=True)
         self._init_active_doc_caches()
 
@@ -692,9 +720,19 @@ class Adapter:
 
     def _advise(self, disp, iface, handled, doc_key):
         iid, names = iface
-        wrapped = self._m.server_util.wrap(_Sink(iid, names, handled, self._raw, doc_key))
-        cp = disp.QueryInterface(self._pc.IID_IConnectionPointContainer).FindConnectionPoint(iid)
-        return cp, cp.Advise(wrapped)
+        stage = "wrap sink"
+        try:
+            wrapped = self._m.server_util.wrap(_Sink(iid, names, handled, self._raw, doc_key))
+            stage = "QueryInterface(IConnectionPointContainer)"
+            container = disp.QueryInterface(self._pc.IID_IConnectionPointContainer)
+            stage = "FindConnectionPoint"
+            cp = container.FindConnectionPoint(iid)
+            stage = "Advise"
+            return cp, cp.Advise(wrapped)
+        except Exception:
+            self._log(f"COM 订阅失败 stage={stage} iid={iid} document={doc_key!r}\n"
+                      + traceback.format_exc().rstrip())
+            raise
 
     def _unadvise(self, sink):
         if sink is None or self._dead:
@@ -1394,6 +1432,11 @@ class Adapter:
 
 
 def main(argv=None):
+    # Keep redirected output printable even with Windows' cp1252 default.
+    # PowerShell must also decode UTF-8 (see README).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="AutoCAD adapter debug entry")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--probe", action="store_true", help="attach, print one get_state() and its duration")
@@ -1414,8 +1457,8 @@ def main(argv=None):
     print(f"attach -> {ok} ({(time.perf_counter() - t0) * 1000:.0f} ms)")
     if not ok:
         return 1
-    print(json.dumps(adapter.summary(), ensure_ascii=False))
     try:
+        print(json.dumps(adapter.summary(), ensure_ascii=False))
         if args.probe:
             before = adapter._debug_counts()
             durations = []

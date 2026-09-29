@@ -2,7 +2,7 @@
 
 按 [适配器规范](../software_trajectory_collector_specification.md) 实现,连接**已在运行**的 AutoCAD,只读地提供 state / action / event 三类记录。设计细节、每个字段的来源和逐项验收表见 [task-adapter-autocad.md](task-adapter-autocad.md)。
 
-> **状态:代码已写完,但没有在任何 Windows + AutoCAD 环境中运行过。** 开发环境是 macOS,只用假的 COM 对象模型验证过纯逻辑部分:事件到记录的映射、队列合并与聚合、日志解码与解析(GBK / UTF-16 / UTF-8)、`CMDACTIVE` / `INSUNITS` 映射。连接 AutoCAD、COM 事件能否送达、各接口实际耗时等都**未验证**。请先按下文"首次在虚拟机上验证"一节操作。
+> **状态：用户已在 Windows + AutoCAD 2026 上报告基础 state 测试通过；COM 事件与日志实时采集仍待复测。** 2026-09-29 修订了事件 sink 接口包装、EN 日志支持、AutoCAD Unicode 转义解析及 CLI 输出编码。真实日志离线解析和 5 项回归测试通过，不代表 Windows COM 回调已验证。详见 [测试记录](windows-test-notes.md)。
 
 ## 文件
 
@@ -93,7 +93,7 @@ python main.py --output C:\traj --task task.json --watch C:\task --adapters auto
 | `layer_changed` | 当前图层改变(`CLAYER`) |
 | `layout_switched` | 切换模型 / 布局选项卡 |
 | `lisp_ended` / `lisp_cancelled` / `api_call` | 执行 LISP 表达式或 LISP 自定义命令 |
-| `command_cancelled` / `error_raised` | `LOGFILEMODE=1` 且 `LOCALE` 为 `CHS` / `ENU`;中文匹配规则尚未用真实日志核对,可能匹配不到 |
+| `command_cancelled` / `error_raised` | `LOGFILEMODE=1` 且 `LOCALE` 为 `CHS` / `ENU` / `EN`;按实际行内容识别中英文。中文转义命令/取消已用真实样例离线核对，未知命令已用更正后的真实样例离线核对，LISP 报错和实时送达仍待实测 |
 
 ## 调试入口
 
@@ -129,3 +129,19 @@ python -m adapters.autocad --watch              # 每 500 ms 打印 get_actions(
 - `adapter.py` 顶部集中放了可调常量:`SELECTION_LIMIT`、`STATE_BUDGET_S`、`PROBE_TIMEOUT_MS`、`SYSVAR_IGNORE`、`LOG_PATTERNS`、`LOG_INPUT_RULE`、`LOG_ANSI_ENCODING` 等。改了影响输出的常量,要同步改 `capabilities.yaml` 和本 README。
 - 模块顶层只导入标准库。pywin32 在 `attach()` 里、在适配器线程上导入,并临时设置 `sys.coinit_flags = 0`,避免首次 `import pythoncom` 把该线程初始化成 STA。
 - 事件回调运行在 COM 的 RPC 线程上,只做"打时间戳 + 追加到 deque"。所有对 AutoCAD 的查询都在适配器线程里做,包括读取新对象的 `ObjectName` / `Handle`。
+
+## 2026-09-29 修复后的复测
+
+更新 Windows 上的 `adapter.py` 后，在 PowerShell 执行：
+
+```powershell
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+python -m adapters.autocad --probe 2>&1 | Tee-Object -FilePath autocad-probe-fixed.txt
+python -m adapters.autocad --watch 2>&1 | Tee-Object -FilePath autocad-watch-fixed.txt
+```
+
+CLI 自行设置 UTF-8 输出，PowerShell 仍需对应解码。probe 应达到 events=on / log=on；实际画线后必须收到命令和对象事件才算事件修复通过。失败时保存完整 traceback（包含订阅阶段及 IID）。
+
+日志先解析 `\U+XXXX` 转义，再识别中英文提示，raw 保留原行；取消优先于命令识别。EN 不等同于英文日志：更正后的 EN 样例含中文转义和 cp1252 引号，EN 的非 UTF-8 回退使用 cp1252；旧样例中的第三方插件 GBK 文本可能乱码，不参与命令匹配。命令参数解析保持关闭。
+
+离线回归：`python -m unittest adapters.autocad.test_regressions -v`。用户更正后的样例包含 ZZZ_NONEEXISTENT 未知命令和 LINE 取消，二者均已通过离线事件生成检查；实时采集仍需 Windows 复测。

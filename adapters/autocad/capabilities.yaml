@@ -1,6 +1,6 @@
 software: AutoCAD
 spec_version: "1"
-software_version: "目标 AutoCAD 2026 简体中文版 (R25.1);尚未在任何 AutoCAD 上实测。实际版本见 raw/adapters.log 中 attach 成功那一行"
+software_version: "目标 AutoCAD 2026 简体中文版 (R25.1);基础 state 已由用户在 Windows 上实测通过；事件和日志修复待复测。实际版本见 raw/adapters.log 中 attach 成功那一行"
 connection: >-
   适配器线程 pythoncom.CoInitializeEx(COINIT_MULTITHREADED);
   pythoncom.GetActiveObject 依次尝试 AutoCAD.Application.25.1 / AutoCAD.Application / 其他版本 ProgID
@@ -180,7 +180,7 @@ events:
       to: {type: "string|number|list|null", meaning: "新值,原样;数值的单位按该系统变量的官方定义"}
       repeat: {type: int, meaning: "仅合并时出现"}
   command_cancelled:
-    source: "log: 命令行日志中以 *取消* / *Cancel* 结尾的行;需 LOGFILEMODE=1 且 LOCALE 为 CHS 或 ENU;t_ms 为读到该行的时刻(时间精度较差)。中文匹配规则尚未用真实日志核对"
+    source: "log: 命令行日志中以 *取消* / *Cancel* 结尾的行;需 LOGFILEMODE=1 且 LOCALE 为 CHS、ENU 或 EN;t_ms 为读到该行的时刻(时间精度较差)。先解析 AutoCAD Unicode 转义，按实际行内容识别中英文；中文命令及取消已用真实样例离线核对，实时送达待复测"
     params:
       command: {type: string, meaning: "被取消的命令(日志中最近的'命令:'回显,其次为 COM 推断);未知为 unknown"}
   error_raised:

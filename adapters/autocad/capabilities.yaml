@@ -1,0 +1,201 @@
+software: AutoCAD
+spec_version: "1"
+software_version: "目标 AutoCAD 2026 简体中文版 (R25.1);尚未在任何 AutoCAD 上实测。实际版本见 raw/adapters.log 中 attach 成功那一行"
+connection: >-
+  适配器线程 pythoncom.CoInitializeEx(COINIT_MULTITHREADED);
+  pythoncom.GetActiveObject 依次尝试 AutoCAD.Application.25.1 / AutoCAD.Application / 其他版本 ProgID
+  (只附着到已运行实例,不启动 AutoCAD);
+  COM 事件经 IConnectionPointContainer.FindConnectionPoint + Advise 订阅,
+  sink 由 AutoCAD 类型库在内存中构建(不生成 makepy 缓存);
+  查询前用 SendMessageTimeout(WM_NULL, 100 ms) 探测 AutoCAD 主线程是否响应;
+  命令行日志需操作者预先设置 LOGFILEMODE=1(适配器不修改)。
+  运行级别 A = COM 事件 + 查询 (+ 日志);B = 仅查询 (+ 日志),见 README
+
+state:
+  active_document:
+    type: string|null
+    source: "ActiveDocument.FullName;为空字符串时 ActiveDocument.Name"
+    meaning: "当前图纸绝对路径(Windows 原样,反斜杠);从未保存的新图为标题如 Drawing1.dwg;无打开图纸、AutoCAD 忙或已退出时为 null"
+  selection:
+    type: list|null
+    source: "ActiveDocument.PickfirstSelectionSet,逐项 ObjectName + Handle"
+    meaning: "当前 pickfirst 选择集,元素格式 ObjectName(Handle),如 AcDbLine(2A3F);最多 50 项;命令'选择对象'提示下正在构建的选择不在其中;无打开图纸时为 []"
+  selection_count:
+    type: int|null
+    source: "PickfirstSelectionSet.Count"
+    meaning: "选择集对象总数(不受 50 项上限影响)"
+  selection_truncated:
+    type: bool|null
+    source: "selection_count > len(selection)"
+    meaning: "selection 是否因数量上限或 350 ms 时间预算被截断"
+  mode:
+    type: string|null
+    source: "系统变量 CMDACTIVE 位码(8→dialog, 4→script, 2→transparent_command, 1→command_active, 64→arx_command, 32→lisp, 其余→idle);busy / no_document 由适配器判断"
+    values: ["idle", "command_active", "transparent_command", "script", "dialog", "arx_command", "lisp", "no_document", "busy"]
+    meaning: "busy = AutoCAD 主线程 100 ms 内不响应或拒绝 COM 调用,此时其余字段全部为 null;no_document = 没有打开的图纸"
+  active_command:
+    type: string|null
+    source: "系统变量 CMDNAMES"
+    meaning: "正在执行的命令名,透明命令用 ' 连接,如 LINE'ZOOM;无命令为空字符串"
+  active_layer:
+    type: string|null
+    source: "系统变量 CLAYER"
+    meaning: "当前图层"
+  active_layout:
+    type: string|null
+    source: "系统变量 CTAB"
+    meaning: "当前布局选项卡名,模型空间为 Model(中文版可能为'模型',以实测为准)"
+  ucs:
+    type: string|null
+    source: "系统变量 UCSNAME;为空时 WORLDUCS=1 取 WORLD,否则 UNNAMED"
+    meaning: "当前 UCS 名称"
+  units:
+    type: string|null
+    source: "系统变量 INSUNITS,按官方取值表映射"
+    meaning: "图形单位,如 millimeters、inches、unitless;表外取值为 insunits_<n>"
+  entity_count:
+    type: int|null
+    source: "ActiveDocument.ModelSpace.Count"
+    meaning: "模型空间实体总数(不含图纸空间)"
+  document_count:
+    type: int|null
+    source: "Application.Documents.Count"
+    meaning: "打开的图纸数"
+  unsaved_changes:
+    type: bool|null
+    source: "系统变量 DBMOD != 0"
+    meaning: "当前图纸是否有未保存的修改"
+  read_only:
+    type: bool|null
+    source: "ActiveDocument.ReadOnly"
+    meaning: "当前图纸是否以只读方式打开"
+  view_center:
+    type: list|null
+    source: "系统变量 VIEWCTR"
+    meaning: "当前视口中心点 [x, y, z],UCS 坐标,图形单位(见 units)"
+  view_height:
+    type: number|null
+    source: "系统变量 VIEWSIZE"
+    meaning: "当前视口显示高度,图形单位(见 units)"
+
+actions:
+  command:
+    source: >-
+      com_event: Application 事件 BeginCommand(t_ms 为回调时刻,params 恒为 {});
+      com_event: Application 事件 BeginLisp,FirstLine 形如 (C:XXX) 的 LISP 自定义命令,name 为 XXX;
+      log: 仅级别 B,命令行日志的'命令: XXX'回显行,params 为 {},
+      t_ms 为读到该行的时刻(时间精度较差,取决于 Recorder 调用 get_actions 的间隔)
+    params:
+      expression: {type: string, meaning: "仅 BeginLisp 来源:LISP 表达式首行,如 (C:DRAWBOX)"}
+  api_call:
+    source: "com_event: Application 事件 BeginLisp,FirstLine 不是 (C:XXX) 形式;name 为表达式中第一个符号。其他 COM/.NET/ObjectARX 客户端的调用无法捕获"
+    params:
+      expression: {type: string, meaning: "LISP 表达式首行,如 (setq a 1)"}
+
+events:
+  command_executed:
+    source: "com_event: Application 事件 EndCommand"
+    params:
+      command: {type: string, meaning: "命令名"}
+      duration_ms: {type: int|null, meaning: "与对应 BeginCommand 的时间差,毫秒;无匹配为 null"}
+  undo:
+    source: "com_event: EndCommand,命令名为 U;或为 UNDO 且该命令执行期间收到过对象事件。与同一次 EndCommand 的 command_executed 同时出现"
+    params:
+      command: {type: string, meaning: "U 或 UNDO"}
+  redo:
+    source: "com_event: EndCommand,命令名为 REDO 或 MREDO。与同一次 EndCommand 的 command_executed 同时出现"
+    params:
+      command: {type: string, meaning: "REDO 或 MREDO"}
+  lisp_ended:
+    source: "com_event: Application 事件 EndLisp;name 为对应 BeginLisp 记录的 name"
+    params:
+      expression: {type: string|null, meaning: "对应 BeginLisp 的 FirstLine;未收到 BeginLisp 为 null"}
+  lisp_cancelled:
+    source: "com_event: Application 事件 LispCancelled"
+    params:
+      expression: {type: string|null, meaning: "同 lisp_ended"}
+  document_created:
+    source: "com_event: Application 事件 NewDrawing(t_ms 取此回调时刻),随后枚举文档确认出现新的未保存图纸时返回;10 s 内未确认则不返回"
+    params:
+      name: {type: string, meaning: "新图纸标题,如 Drawing2.dwg"}
+  document_opened:
+    source: "com_event: Application 事件 EndOpen"
+    params:
+      path: {type: string, meaning: "打开的图纸绝对路径"}
+  document_saved:
+    source: "com_event: Application 事件 EndSave;扩展名不是 .dwg/.dxf/.dwt/.dws 的(如自动保存 .sv$)不返回"
+    params:
+      path: {type: string, meaning: "保存的绝对路径(另存为时为新路径)"}
+  document_closed:
+    source: "com_event: Document 事件 BeginClose(图纸即将关闭)"
+    params:
+      name: {type: string, meaning: "图纸标题"}
+      path: {type: string|null, meaning: "绝对路径;从未保存的新图为 null"}
+  document_activated:
+    source: "com_event: Document 事件 Activate(切换到该图纸)"
+    params:
+      name: {type: string, meaning: "图纸标题"}
+      path: {type: string|null, meaning: "绝对路径;从未保存的新图为 null"}
+  object_created:
+    source: "com_event: Document 事件 ObjectAdded;ObjectName/Handle/ObjectID 在回调之后于适配器线程读取。包括非图形对象(如图层表记录、字典)"
+    params:
+      handle: {type: string|null, meaning: "对象句柄,图纸内唯一;对象在读取前已被删除、或 AutoCAD 持续忙超过 5 s 时为 null(此时 name 为 unresolved)"}
+      object_type: {type: string|null, meaning: "ObjectName,如 AcDbLine"}
+      object_id: {type: int|null, meaning: "ObjectID,仅在本次 AutoCAD 会话内有效"}
+      command: {type: string|null, meaning: "事件发生时正在执行的命令(按 BeginCommand/EndCommand 推断,可能不准)"}
+  object_modified:
+    source: "com_event: Document 事件 ObjectModified;不含被修改的属性及前后值;一次修改可能触发多条"
+    params:
+      handle: {type: string|null, meaning: "同 object_created"}
+      object_type: {type: string|null, meaning: "同 object_created"}
+      object_id: {type: int|null, meaning: "同 object_created"}
+      command: {type: string|null, meaning: "同 object_created"}
+      repeat: {type: int, meaning: "仅合并时出现:连续完全相同的记录条数"}
+  object_deleted:
+    source: "com_event: Document 事件 ObjectErased(只带 ObjectID);handle/object_type 取自本次会话见过该对象的缓存(对象事件、选择集)"
+    params:
+      object_id: {type: int|null, meaning: "被删除对象的 ObjectID"}
+      handle: {type: string|null, meaning: "缓存中有则填,否则 null(此时 name 为 ObjectID(<id>))"}
+      object_type: {type: string|null, meaning: "同上"}
+      command: {type: string|null, meaning: "同 object_created"}
+  selection_changed:
+    source: "com_event: Document 事件 SelectionChanged(pickfirst 选择集变化,事件不带内容;当前选择以 state.selection 为准);name 为图纸标题"
+    params:
+      repeat: {type: int, meaning: "仅合并时出现:连续触发的次数"}
+  layer_changed:
+    source: "com_event: Application 事件 SysVarChanged,变量 CLAYER"
+    params:
+      from: {type: string|null, meaning: "原当前图层(attach 时读取或上次事件);未知为 null"}
+      to: {type: string, meaning: "新当前图层"}
+  layout_switched:
+    source: "com_event: Document 事件 LayoutSwitched"
+    params:
+      from: {type: string|null, meaning: "原布局名;未知为 null"}
+      to: {type: string, meaning: "新布局名"}
+  sysvar_changed:
+    source: "com_event: Application 事件 SysVarChanged(CLAYER、CTAB 除外;SYSVAR_IGNORE 目前为空)"
+    params:
+      name: {type: string, meaning: "系统变量名,大写"}
+      from: {type: "string|number|list|null", meaning: "上一值(attach 时读取的 OSMODE/ORTHOMODE/SNAPMODE/GRIDMODE/POLARMODE/DYNMODE,或上次事件);未知为 null"}
+      to: {type: "string|number|list|null", meaning: "新值,原样;数值的单位按该系统变量的官方定义"}
+      repeat: {type: int, meaning: "仅合并时出现"}
+  command_cancelled:
+    source: "log: 命令行日志中以 *取消* / *Cancel* 结尾的行;需 LOGFILEMODE=1 且 LOCALE 为 CHS 或 ENU;t_ms 为读到该行的时刻(时间精度较差)。中文匹配规则尚未用真实日志核对"
+    params:
+      command: {type: string, meaning: "被取消的命令(日志中最近的'命令:'回显,其次为 COM 推断);未知为 unknown"}
+  error_raised:
+    source: "log: 命令行日志的未知命令行、LISP 报错行;条件与时间精度同 command_cancelled"
+    params:
+      kind: {type: string, meaning: "unknown_command 或 lisp_error"}
+      message: {type: string, meaning: "日志原文"}
+      command: {type: string, meaning: "仅 unknown_command:用户输入的命令名"}
+
+# 队列超过 2000 条时(规范第 6 节),超出部分按 type 聚合为一条:type 不变,
+# name 为该 type,params 只有:
+#   aggregated: int  被聚合的记录条数
+#   first_t_ms: int  被聚合记录中最早的 t_ms(同时作为该记录的 t_ms)
+#   last_t_ms:  int  被聚合记录中最晚的 t_ms
+# actions 与 events 相同。
+#
+# 未声明(拿不到或未启用):parameter_changed(无属性前后值)、view_changed(无对应事件)、
+# 日志'提示: 输入'行形成的 command(params prompt/input,等真实日志核对后启用)。

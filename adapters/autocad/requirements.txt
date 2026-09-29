@@ -1,0 +1,3 @@
+# AutoCAD adapter. Both are already in the Recorder's requirements.txt.
+pywin32>=306; sys_platform == "win32"   # COM (pythoncom, win32com.server), win32gui, win32process
+psutil                                   # process name check at attach (optional at runtime)

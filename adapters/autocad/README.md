@@ -2,7 +2,7 @@
 
 按 [适配器规范](../software_trajectory_collector_specification.md) 实现,连接**已在运行**的 AutoCAD,只读地提供 state / action / event 三类记录。设计细节、每个字段的来源和逐项验收表见 [task-adapter-autocad.md](task-adapter-autocad.md)。
 
-> **当前状态：Windows 实测中，事件订阅成功后运行 `--watch` 并绘制 LINE 导致 AutoCAD 访问冲突崩溃（AC-005）。当前已暂停全部 COM 事件订阅，固定使用 B 级（状态查询＋日志），适用于独立调试和 Recorder。** 这只是临时隔离，崩溃根因和降级后的稳定性尚未实测确认；不能宣称适配器验收通过。基础 state 测试此前由用户报告通过，当前 7 项离线回归通过。详见 [测试记录](windows-test-notes.md)。
+> **当前状态：Windows 实测中，事件订阅成功后运行 `--watch` 并绘制 LINE 导致 AutoCAD 访问冲突崩溃（AC-005）。当前已暂停全部 COM 事件订阅，固定使用 B 级（状态查询＋日志），适用于独立调试和 Recorder。** 这只是临时隔离，崩溃根因和降级后的稳定性尚未实测确认；不能宣称适配器验收通过。基础 state 测试此前由用户报告通过，当前 10 项离线回归通过。详见 [测试记录](windows-test-notes.md)。
 
 ## 文件
 
@@ -151,3 +151,7 @@ CLI 自行设置 UTF-8 输出，PowerShell 仍需对应解码。上述为 AC-005
 `COM_EVENTS_ENABLED=False`：attach 不订阅 Application / Document 事件，`_advise` 也拒绝订阅。没有新增 Recorder 接口、后台线程或对 AutoCAD 的写操作。原有 COM 事件实现保留待诊断，不能因 constants 可编辑就视为已验证可重新启用。
 
 当前可用路径：state 查询；日志已启用时的 command、command_cancelled、error_raised（时间戳取读到日志时刻）。不会产生 COM 来源的对象、选择、文档生命周期、command_executed、undo/redo 或 LISP 事件，也不提供 api_call。日志实时刷新和降级后的稳定性仍待 Windows 验证。
+
+## Recorder 初始化遇到 AutoCAD 忙碌（AC-006）
+
+取得 Application 并完成身份检查后，图纸扫描或初始缓存读取遇到 application is busy，不再导致 attach=False。保留连接并在后续采集调用重试，日志显示“图纸初始化暂时忙碌”；成功后显示“图纸初始化完成，日志状态: ...”。尚未取得 Application 或身份检查失败仍属于连接失败。初始化前的命令可能未被跟踪，测试应先打开图纸、结束当前命令、关闭对话框，待初始化完成后再执行验收操作。此修订通过离线回归，待 Windows Recorder 复测。

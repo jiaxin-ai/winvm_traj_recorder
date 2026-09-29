@@ -2,12 +2,13 @@
 import collections
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from adapters.autocad.adapter import Adapter, LOG_ANSI_ENCODING, LOG_PATTERNS, LogParser, LogTail, _Sink
+from adapters.autocad.adapter import Adapter, LOG_ANSI_ENCODING, LOG_PATTERNS, LogParser, LogTail, _Sink, _Busy, _Dead
 
 
 class LogTests(unittest.TestCase):
@@ -61,6 +62,46 @@ class LogTests(unittest.TestCase):
                 results.extend(result for line in lines if (result := parser.parse(line)))
             self.assertEqual(results, [("command", "LINE")])
             self.assertEqual(tail.read_lines()[0], [])
+
+
+class InitializationTests(unittest.TestCase):
+    def test_busy_document_enumeration_recovers_on_later_call(self):
+        adapter = Adapter()
+        adapter._app = object()
+        def recovered_scan(initial=False):
+            self.assertTrue(initial)
+            adapter._rescan_needed = False
+        with patch.object(adapter, "_rescan", side_effect=_Busy()), \
+                patch.object(adapter, "_init_active_doc_caches") as caches:
+            adapter._initialize_documents()
+            caches.assert_not_called()
+        self.assertIsNotNone(adapter._app)
+        self.assertTrue(adapter._initial_documents_pending)
+        self.assertTrue(adapter._rescan_needed)
+        with patch.object(adapter, "_rescan", side_effect=recovered_scan), \
+                patch.object(adapter, "_init_active_doc_caches") as caches, \
+                patch.object(adapter, "_responsive", return_value=True):
+            adapter._maintain(time.perf_counter() + 1)
+            caches.assert_called_once()
+        self.assertFalse(adapter._initial_documents_pending)
+        self.assertFalse(adapter._rescan_needed)
+
+    def test_busy_cache_read_rearms_retry_even_after_scan_clears_flag(self):
+        adapter = Adapter()
+        def scan(initial=False):
+            adapter._rescan_needed = False
+        with patch.object(adapter, "_rescan", side_effect=scan), \
+                patch.object(adapter, "_init_active_doc_caches", side_effect=_Busy()):
+            adapter._initialize_documents()
+        self.assertTrue(adapter._initial_documents_pending)
+        self.assertTrue(adapter._rescan_needed)
+
+    def test_disconnect_or_unexpected_error_is_not_treated_as_busy(self):
+        for error in (_Dead(), ValueError("bad data")):
+            adapter = Adapter()
+            with patch.object(adapter, "_rescan", side_effect=error):
+                with self.assertRaises(type(error)):
+                    adapter._initialize_documents()
 
 
 class SinkTests(unittest.TestCase):

@@ -516,6 +516,7 @@ class Adapter:
         self._archive = {}
         self._active_key = None
         self._rescan_needed = False
+        self._initial_documents_pending = False
         self._pending_new = collections.deque()   # NewDrawing t_ms not yet paired with a document
         self._closing = {}                          # doc key -> BeginClose t_ms, until the document is gone
         self._raw = collections.deque()
@@ -661,8 +662,7 @@ class Adapter:
         version = self._prop(self._app, "app", "Version")
 
         self._configure_events(mta)
-        self._rescan(initial=True)
-        self._init_active_doc_caches()
+        self._initialize_documents()
 
         level = "A" if self._events_on else "B"
         self._log(f"attach 成功: AutoCAD {version} PID {self._pid} level={level} "
@@ -670,6 +670,25 @@ class Adapter:
                   f"log={'on' if self._log_on else 'off(' + str(self._log_reason) + ')'} "
                   f"locale={self._locale} documents={len(self._docs)}")
         return True
+
+    def _initialize_documents(self):
+        """Identity is already checked; a busy document is not a failed attach.
+        Retry on later Recorder calls without sleeping or running a timer.
+        Disconnection and unexpected errors still propagate to the caller.
+        """
+        self._initial_documents_pending = True
+        self._rescan_needed = True
+        try:
+            self._rescan(initial=True)
+            self._init_active_doc_caches()
+        except _Busy:
+            self._rescan_needed = True
+            self._log_error("initial_documents_busy",
+                            "已连接 AutoCAD，但图纸初始化暂时忙碌；保留连接，后续采集调用重试。")
+            return
+        self._initial_documents_pending = False
+        self._log("图纸初始化完成，日志状态: "
+                  + ("on" if self._log_on else f"off({self._log_reason})"))
 
     def _configure_events(self, mta):
         if not COM_EVENTS_ENABLED:
@@ -1261,7 +1280,10 @@ class Adapter:
             del self._archive[key]
         if self._rescan_needed and time.perf_counter() < deadline and self._responsive():
             try:
-                self._rescan()
+                if self._initial_documents_pending:
+                    self._initialize_documents()
+                else:
+                    self._rescan()
             except (_Busy, _Dead):
                 pass
 

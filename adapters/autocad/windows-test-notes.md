@@ -100,3 +100,25 @@ $env:PYTHONIOENCODING = "utf-8"
 临时隔离：COM_EVENTS_ENABLED=False；attach 跳过 Application / Document 订阅，_advise 也禁止订阅。CLI 和 Recorder 同样生效，不修改 Recorder 主体。保留 state 与日志 B 级路径，不把此措施称作根因修复或保证不会崩溃。
 
 7 项离线回归通过：新增检查两种 apartment 条件下均不调用订阅、直接订阅被拦截、日志 command/cancel/error 仍能输出。Windows 降级后稳定性未验证。下一份所需证据为本次崩溃前已有的 autocad-watch-fixed.txt 或完整 PowerShell 输出；不要求重新运行旧版以复现。
+
+## AC-005 隔离后的 Windows watch 结果
+
+用户提供更新 adapter 后的 `autocad-watch-fixed.txt`（UTF-16，24 行）。结果：
+
+- attach 成功，72 ms，PID 5024，level=B，events=off(AC-005)，log=on，locale=EN。确认当前运行的订阅隔离生效。
+- 实时记录 3 条日志来源 command：LINE、ZZZ_NONEXISTENT、LINE。
+- 实时记录 error_raised(kind=unknown_command, command=ZZZ_NONEXISTENT)。
+- 实时记录 command_cancelled(command=LINE)。
+- state 共 16 条，12 条 idle、4 条 busy；包含连续 3 个采样点 busy，随后恢复 idle，文件最后也是 idle。原因不能从 state 摘要确定，不能一概视作正常或证明崩溃。
+- 文件未见 Python traceback、AutoCAD 断开信息；也没有 Ctrl+C 后 stats，故只能证明所提供片段内采集持续恢复，不能证明完整关闭流程和长期稳定性。
+- 所有 action/event 为 source=log，lag=0 ms 表示从读取日志到打印的时间，不能证明事件发生到采集的真实延迟为零。
+
+结论：B 级日志实时最小操作链通过，AC-003 的 EN/转义/未知命令/取消路径得到 Windows 证据；COM 事件崩溃 AC-005 仍未解决，主方案和 Recorder 集成仍未验收。无需重测相同日志步骤。
+
+## AC-006：Recorder attach 因图纸暂时忙碌而耗尽重试
+
+用户提供 adapters.log：首次 GetActiveObject 返回 -2147221021；后两次已经取得 Application、通过身份检查，却在初始 _rescan 的 Documents.Count 查询中遇到 -2147417846（application is busy），被包装成 _Busy 后导致 attach=False。不能据此断定权限不匹配，也不是 COM 事件订阅失败。
+
+修订：在已通过进程身份检查的情况下，初始图纸扫描/系统变量缓存读取遇到 _Busy 时保留连接，设置待初始化标志，在后续 get_actions/get_events 的维护阶段重试。无额外线程、定时器或 sleep，不修改 Recorder 三次重试机制；未取得 Application、身份检查失败、断开或非忙碌异常仍按原失败处理。延后初始化期间日志可能尚未开始跟踪，因此不能保证覆盖初始化前操作，复测应等图纸初始化完成后开始。COM 事件仍禁用。
+
+新增 3 项离线回归：扫描忙后恢复、缓存忙后重新安排初始化、断开和意外异常不吞掉。合计 10 项通过。Windows Recorder 复测待完成。

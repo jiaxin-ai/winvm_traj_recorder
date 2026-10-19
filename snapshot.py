@@ -127,7 +127,7 @@ class SnapshotManager:
     and runs immediately after the current one finishes.
     """
 
-    def __init__(self, episode_dir, watch_dir, writer, enabled=True):
+    def __init__(self, episode_dir, watch_dir, writer, enabled=True, milestone_file=MILESTONE_FILE):
         # Resolved to absolute right away: run_git() sets the git
         # subprocess's cwd to watch_dir, so any *relative* path built from
         # these later (e.g. finalize()'s repo.bundle path, passed as a
@@ -138,6 +138,8 @@ class SnapshotManager:
         self.watch_dir = Path(watch_dir).resolve()
         self.writer = writer
         self.requested_enabled = enabled
+        # Control file polled for named milestones; main.py --milestone-file overrides the default.
+        self.milestone_file = Path(milestone_file)
         self.enabled = False
         self.disabled_reason = None
         self.git_dir = self.episode_dir / "snapshots" / "repo.git"
@@ -363,13 +365,13 @@ class SnapshotManager:
     def _milestone_file_poll_loop(self):
         while not self._stop:
             try:
-                if MILESTONE_FILE.exists():
+                if self.milestone_file.exists():
                     try:
-                        content = MILESTONE_FILE.read_text(encoding="utf-8", errors="replace").strip()
+                        content = self.milestone_file.read_text(encoding="utf-8", errors="replace").strip()
                     except OSError:
                         content = ""
                     try:
-                        MILESTONE_FILE.unlink()
+                        self.milestone_file.unlink()
                     except OSError:
                         pass
                     self.notify_milestone(content if content else None, now_ms())

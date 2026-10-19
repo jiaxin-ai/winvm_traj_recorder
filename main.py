@@ -3,9 +3,10 @@
 
     python main.py --output C:\\traj --task task.json --watch C:\\task
 
-Creates output/<episode_id>/ (episode_id defaults to the start time), starts
-every collection module, records the initial observation, then waits for
-Ctrl+C or the C:\\ProgramData\\trajrec\\STOP file. On stop it shuts every
+Creates output/<episode_id>/ (episode_id defaults to the start time; a caller
+such as the VM agent service passes --episode-id), starts every collection
+module, records the initial observation, then waits for Ctrl+C or the stop
+file (--stop-file, default C:\\ProgramData\\trajrec\\STOP). On stop it shuts every
 module down cleanly, copies changed files from --watch into artifacts/, and
 calls trajectory.py to build trajectory.jsonl / trajectory.html.
 
@@ -13,6 +14,7 @@ See README.md for what is and isn't verified on real Windows.
 """
 import argparse
 import json
+import re
 import shutil
 import sys
 import time
@@ -39,14 +41,19 @@ import trajectory
 import window
 
 STOP_MARKER = Path(r"C:\ProgramData\trajrec\STOP")
+EPISODE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 ARTIFACT_SIZE_LIMIT = 500 * 1024 * 1024  # 500MB, per task.md
 WINDOW_POLL_INTERVAL_S = 0.2
 PROCESS_POLL_INTERVAL_S = 0.5
 
 
-def make_episode_dir(output_root):
-    episode_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+def make_episode_dir(output_root, episode_id=None):
+    episode_id = episode_id or datetime.now().strftime("%Y%m%d_%H%M%S")
     episode_dir = Path(output_root) / episode_id
+    # An explicit ID (e.g. a vm_manager recording_id) must never overwrite an earlier recording.
+    if (episode_dir / "raw" / "events.jsonl").exists():
+        print(f"[trajrec] 错误: episode 目录已有录制数据: {episode_dir}", file=sys.stderr)
+        sys.exit(1)
     for sub in ("screenshots", "artifacts", "raw", "raw/terminal"):
         (episode_dir / sub).mkdir(parents=True, exist_ok=True)
     return episode_dir
@@ -82,12 +89,12 @@ def write_meta(episode_dir, watch_dir, snapshot_mgr, software_mgr):
 class Episode:
     """Owns every collection module's lifecycle for one recording."""
 
-    def __init__(self, episode_dir, watch_dir, snapshot_enabled=True, adapters="auto"):
+    def __init__(self, episode_dir, watch_dir, snapshot_enabled=True, adapters="auto", milestone_file=snapshot.MILESTONE_FILE):
         self.episode_dir = Path(episode_dir)
         self.watch_dir = watch_dir
         self.writer = input_recorder.JsonlWriter(self.episode_dir / "raw" / "events.jsonl")
         self.snapshot_mgr = snapshot.SnapshotManager(
-            self.episode_dir, Path(watch_dir), self.writer, enabled=snapshot_enabled)
+            self.episode_dir, Path(watch_dir), self.writer, enabled=snapshot_enabled, milestone_file=milestone_file)
         self.snapshot_mgr.init_repo()  # resolved eagerly so main() can write meta.json before start()
         self.software_mgr = software.SoftwareManager(self.episode_dir, software.parse_adapters_arg(adapters))
         self.software_mgr.load()
@@ -257,12 +264,13 @@ def _is_relative_to(path, base):
         return False
 
 
-def wait_for_stop():
-    STOP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+def wait_for_stop(stop_file=STOP_MARKER):
+    stop_file = Path(stop_file)
+    stop_file.parent.mkdir(parents=True, exist_ok=True)
     try:
         while True:
-            if STOP_MARKER.exists():
-                STOP_MARKER.unlink()
+            if stop_file.exists():
+                stop_file.unlink()
                 print("[trajrec] 检测到 STOP 文件,停止录制")
                 return
             time.sleep(0.3)
@@ -280,22 +288,32 @@ def main():
                          help="启用文件快照(默认开启)")
     parser.add_argument("--no-snapshot", dest="snapshot", action="store_false",
                          help="关闭文件快照功能")
+    parser.add_argument("--episode-id", default=None,
+                        help="episode 目录名(字母、数字、-、_,最多 64 个字符),默认取启动时间;"
+                             "VM 内的 Agent 服务传入 vm_manager 的 recording_id,输出即 <output>\\<recording_id>")
+    parser.add_argument("--stop-file", default=str(STOP_MARKER),
+                        help="出现即停止录制的控制文件,默认 C:\\ProgramData\\trajrec\\STOP")
+    parser.add_argument("--milestone-file", default=str(snapshot.MILESTONE_FILE),
+                        help="写入即记录 milestone 的控制文件,默认 C:\\ProgramData\\trajrec\\MILESTONE")
     parser.add_argument("--adapters", default="auto",
                          help="软件适配器:auto(默认,按前台进程自动匹配)、none(禁用)、"
                               "或逗号分隔的 adapters/ 子目录名,如 mock,autocad")
     args = parser.parse_args()
 
+    if args.episode_id is not None and not EPISODE_ID_PATTERN.match(args.episode_id):
+        print(f"[trajrec] 错误: --episode-id 只能包含字母、数字、-、_,最多 64 个字符: {args.episode_id}", file=sys.stderr)
+        sys.exit(1)
     if sys.platform != "win32":
         print("main.py 只能在 Windows 上运行(依赖 pynput/uiautomation/pywin32/mss/watchdog)")
         sys.exit(1)
 
     check_watch_output_nesting(args.output, args.watch)
 
-    episode_dir = make_episode_dir(args.output)
+    episode_dir = make_episode_dir(args.output, args.episode_id)
     copy_task_file(args.task, episode_dir)
     print(f"[trajrec] episode 目录: {episode_dir}")
 
-    episode = Episode(episode_dir, args.watch, snapshot_enabled=args.snapshot, adapters=args.adapters)
+    episode = Episode(episode_dir, args.watch, snapshot_enabled=args.snapshot, adapters=args.adapters, milestone_file=args.milestone_file)
     write_meta(episode_dir, args.watch, episode.snapshot_mgr, episode.software_mgr)
     if not episode.snapshot_mgr.enabled:
         print(f"[trajrec] 文件快照未启用: {episode.snapshot_mgr.disabled_reason}")
@@ -304,7 +322,7 @@ def main():
         print(f"[trajrec] 已加载软件适配器: {names}")
     episode.start()
 
-    wait_for_stop()
+    wait_for_stop(args.stop_file)
 
     episode.stop()
     write_meta(episode_dir, args.watch, episode.snapshot_mgr, episode.software_mgr)  # final adapter counters

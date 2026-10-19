@@ -89,12 +89,14 @@ def write_meta(episode_dir, watch_dir, snapshot_mgr, software_mgr):
 class Episode:
     """Owns every collection module's lifecycle for one recording."""
 
-    def __init__(self, episode_dir, watch_dir, snapshot_enabled=True, adapters="auto", milestone_file=snapshot.MILESTONE_FILE):
+    def __init__(self, episode_dir, watch_dir, snapshot_enabled=True, adapters="auto", milestone_file=snapshot.MILESTONE_FILE,
+                 watch_gitignore=True):
         self.episode_dir = Path(episode_dir)
         self.watch_dir = watch_dir
         self.writer = input_recorder.JsonlWriter(self.episode_dir / "raw" / "events.jsonl")
         self.snapshot_mgr = snapshot.SnapshotManager(
-            self.episode_dir, Path(watch_dir), self.writer, enabled=snapshot_enabled, milestone_file=milestone_file)
+            self.episode_dir, Path(watch_dir), self.writer, enabled=snapshot_enabled, milestone_file=milestone_file,
+            watch_gitignore=watch_gitignore)
         self.snapshot_mgr.init_repo()  # resolved eagerly so main() can write meta.json before start()
         self.software_mgr = software.SoftwareManager(self.episode_dir, software.parse_adapters_arg(adapters))
         self.software_mgr.load()
@@ -295,6 +297,9 @@ def main():
                         help="出现即停止录制的控制文件,默认 C:\\ProgramData\\trajrec\\STOP")
     parser.add_argument("--milestone-file", default=str(snapshot.MILESTONE_FILE),
                         help="写入即记录 milestone 的控制文件,默认 C:\\ProgramData\\trajrec\\MILESTONE")
+    parser.add_argument("--no-watch-gitignore", dest="watch_gitignore", action="store_false", default=True,
+                        help="快照的忽略规则写进 snapshots\\repo.git\\info\\exclude,不在 --watch 目录里写 .gitignore"
+                             "(--watch 是交付目录时使用,如 HarnessStudio 的任务空间 D:\\)")
     parser.add_argument("--adapters", default="auto",
                          help="软件适配器:auto(默认,按前台进程自动匹配)、none(禁用)、"
                               "或逗号分隔的 adapters/ 子目录名,如 mock,autocad")
@@ -313,7 +318,8 @@ def main():
     copy_task_file(args.task, episode_dir)
     print(f"[trajrec] episode 目录: {episode_dir}")
 
-    episode = Episode(episode_dir, args.watch, snapshot_enabled=args.snapshot, adapters=args.adapters, milestone_file=args.milestone_file)
+    episode = Episode(episode_dir, args.watch, snapshot_enabled=args.snapshot, adapters=args.adapters, milestone_file=args.milestone_file,
+                      watch_gitignore=args.watch_gitignore)
     write_meta(episode_dir, args.watch, episode.snapshot_mgr, episode.software_mgr)
     if not episode.snapshot_mgr.enabled:
         print(f"[trajrec] 文件快照未启用: {episode.snapshot_mgr.disabled_reason}")

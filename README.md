@@ -86,7 +86,7 @@ python main.py --output C:\traj --task task.json --watch C:\task
 - 输出目录:`C:\traj\<episode_id>\`(`episode_id` 是启动时间,如 `20260922_103215`)。
 - **停止**:按 `Ctrl+C`,或者在另一个窗口/宿主机创建文件 `C:\ProgramData\trajrec\STOP`。
 - 停止后自动生成 `trajectory.jsonl`、`trajectory.html`,并把录制期间有变化的文件复制进 `artifacts/`。
-- 可选参数(给 VM 内的 Agent 服务等调用方用):`--episode-id <id>` 指定 episode 目录名(只能包含字母、数字、`-`、`_`,最多 64 个字符;目录里已有录制数据时拒绝启动,不会覆盖);`--stop-file <路径>`、`--milestone-file <路径>` 指定停止和 milestone 控制文件,默认仍是 `C:\ProgramData\trajrec\STOP` / `MILESTONE`。HarnessStudio 的用法是 `--output G:\ --episode-id <recording_id> --stop-file C:\ProgramData\trajrec\<recording_id>\STOP --milestone-file C:\ProgramData\trajrec\<recording_id>\MILESTONE`。
+- 可选参数(给 VM 内的 Agent 服务等调用方用):`--episode-id <id>` 指定 episode 目录名(只能包含字母、数字、`-`、`_`,最多 64 个字符;目录里已有录制数据时拒绝启动,不会覆盖);`--stop-file <路径>`、`--milestone-file <路径>` 指定停止和 milestone 控制文件,默认仍是 `C:\ProgramData\trajrec\STOP` / `MILESTONE`。`--no-watch-gitignore` 把快照的忽略规则写进 `snapshots\repo.git\info\exclude`,不在 `--watch` 目录里写 `.gitignore`(`--watch` 是交付目录时用)。HarnessStudio / vm_manager 由 VM 内的 Agent 服务启停采集器,见 [integration/harnessstudio/README.md](integration/harnessstudio/README.md)。
 - V1.1:文件快照默认开启,加 `--no-snapshot` 关闭。**`--output` 不能位于 `--watch` 之内**,否则启动时直接报错退出(轨迹数据会被快照吃进去)。所有要被快照的工程文件都必须放在 `--watch` 目录里,别的地方不会被快照。
 
 修改合并规则、想从 raw 数据重新生成轨迹(不用重新录制):

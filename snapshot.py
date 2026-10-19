@@ -94,11 +94,13 @@ def check_git_available():
         return False
 
 
-def _write_gitignore(watch_dir):
+def _write_gitignore(watch_dir, path=None):
     """Adds the fixed set of noise patterns to <watch_dir>/.gitignore,
-    appending only whatever isn't already there. Must live in the work
-    tree, not the bare repo -- git reads .gitignore from GIT_WORK_TREE."""
-    path = Path(watch_dir) / ".gitignore"
+    appending only whatever isn't already there. git reads .gitignore from
+    GIT_WORK_TREE; a caller that must not write into the watched directory
+    passes path=<git_dir>/info/exclude, which git also honours."""
+    path = Path(path) if path else Path(watch_dir) / ".gitignore"
+    path.parent.mkdir(parents=True, exist_ok=True)
     existing_lines = []
     if path.exists():
         existing_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -127,7 +129,7 @@ class SnapshotManager:
     and runs immediately after the current one finishes.
     """
 
-    def __init__(self, episode_dir, watch_dir, writer, enabled=True, milestone_file=MILESTONE_FILE):
+    def __init__(self, episode_dir, watch_dir, writer, enabled=True, milestone_file=MILESTONE_FILE, watch_gitignore=True):
         # Resolved to absolute right away: run_git() sets the git
         # subprocess's cwd to watch_dir, so any *relative* path built from
         # these later (e.g. finalize()'s repo.bundle path, passed as a
@@ -140,6 +142,9 @@ class SnapshotManager:
         self.requested_enabled = enabled
         # Control file polled for named milestones; main.py --milestone-file overrides the default.
         self.milestone_file = Path(milestone_file)
+        # False (main.py --no-watch-gitignore): the noise patterns go to repo.git/info/exclude and nothing is
+        # written into the watched directory, e.g. a HarnessStudio task workspace whose files are the task's output.
+        self.watch_gitignore = watch_gitignore
         self.enabled = False
         self.disabled_reason = None
         self.git_dir = self.episode_dir / "snapshots" / "repo.git"
@@ -180,7 +185,7 @@ class SnapshotManager:
                 ("gc.auto", "0"),
             ):
                 run_git(self.git_dir, self.watch_dir, ["config", key, value])
-            _write_gitignore(self.watch_dir)
+            _write_gitignore(self.watch_dir, None if self.watch_gitignore else self.git_dir / "info" / "exclude")
         except Exception as exc:
             self.disabled_reason = f"init failed: {exc}"
             print(f"[snapshot] 初始化仓库失败,关闭快照功能,继续录制: {exc}", file=sys.stderr)

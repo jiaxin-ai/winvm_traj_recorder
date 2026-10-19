@@ -1,4 +1,5 @@
-"""Cross-platform checks for --episode-id / --stop-file / --milestone-file (run: python -m unittest test_control_files)."""
+"""Cross-platform checks for --episode-id / --stop-file / --milestone-file / --no-watch-gitignore
+(run: python -m unittest test_control_files)."""
 import tempfile
 import threading
 import time
@@ -58,6 +59,26 @@ class ControlFileTests(unittest.TestCase):
             manager._stop = True
             self.assertEqual(names, ["连杆完成"])
             self.assertFalse(milestone.exists())
+
+    @unittest.skipUnless(snapshot.check_git_available(), "git not installed")
+    def test_ignore_patterns_can_stay_out_of_the_watched_directory(self):
+        with tempfile.TemporaryDirectory() as root:
+            watch = Path(root) / "task"
+            watch.mkdir()
+            manager = snapshot.SnapshotManager(Path(root) / "episode", watch, writer=None, watch_gitignore=False)
+            self.assertTrue(manager.init_repo(), manager.disabled_reason)
+            self.assertEqual(list(watch.iterdir()), [], "nothing is written into the watched directory")
+            (watch / "~$part.SLDPRT").write_text("lock", encoding="utf-8")
+            (watch / "part.SLDPRT").write_text("model", encoding="utf-8")
+            r = snapshot.run_git(manager.git_dir, manager.watch_dir, ["status", "--porcelain", "--untracked-files=all"])
+            self.assertEqual(r.stdout.split(), ["??", "part.SLDPRT"])
+
+    @unittest.skipUnless(snapshot.check_git_available(), "git not installed")
+    def test_ignore_patterns_default_to_the_watched_gitignore(self):
+        with tempfile.TemporaryDirectory() as root:
+            manager = snapshot.SnapshotManager(Path(root) / "episode", Path(root) / "task", writer=None)
+            self.assertTrue(manager.init_repo(), manager.disabled_reason)
+            self.assertIn("~$*", (Path(root) / "task" / ".gitignore").read_text(encoding="utf-8").splitlines())
 
 
 if __name__ == "__main__":

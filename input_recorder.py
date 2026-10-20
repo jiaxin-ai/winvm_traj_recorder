@@ -71,6 +71,9 @@ _WM_KEYUP = 0x0101
 _WM_SYSKEYDOWN = 0x0104
 _WM_SYSKEYUP = 0x0105
 _VK_M = ord("M")
+# KBDLLHOOKSTRUCT / MSLLHOOKSTRUCT flags: the event was injected by a program (SendInput).
+_LLKHF_INJECTED = 0x10
+_LLMHF_INJECTED = 0x01
 
 TOAST_DURATION_MS = 1500
 
@@ -90,9 +93,15 @@ _SPECIAL_KEY_NAMES = {
 def key_to_name(key):
     """Maps a pynput key event to a lowercase key name (task.md convention)."""
     if isinstance(key, keyboard.KeyCode):
-        if key.char:
+        if key.char and key.char.isprintable():
             return key.char.lower()
-        return f"vk{key.vk}"
+        # With Ctrl held, pynput reports the control character (Ctrl+V -> "\x16"); use the key itself.
+        vk = getattr(key, "vk", None)
+        if vk is not None and (0x41 <= vk <= 0x5A or 0x30 <= vk <= 0x39):
+            return chr(vk).lower()
+        if key.char and len(key.char) == 1 and 1 <= ord(key.char) <= 26:
+            return chr(ord("a") + ord(key.char) - 1)
+        return f"vk{vk}"
     name = key.name if hasattr(key, "name") else str(key)
     return _SPECIAL_KEY_NAMES.get(name, name)
 
@@ -176,6 +185,11 @@ class InputRecorder:
         self._enabled = threading.Event()  # gate: ignore input until main.py says "ready"
         self._mods = set()  # currently-held modifiers among {"ctrl", "alt", "shift"}, for the milestone hotkey
         self._milestone_suppressed = False  # True between a suppressed M key-down and its matching key-up
+        # Windows marks input sent by a program (SendInput, e.g. the Agent's pyautogui) as injected; input from
+        # the VM's virtual keyboard and mouse (a person over VNC/RDP) is not. Set by the hook filters, which run
+        # on the hook thread right before the matching callback; None where the flag is unknown.
+        self._key_injected = None
+        self._mouse_injected = None
 
     # -- public control -----------------------------------------------
     def start(self):
@@ -183,7 +197,10 @@ class InputRecorder:
         self._uia_worker_thread = threading.Thread(target=self._uia_worker_loop, daemon=True)
         self._shot_worker_thread.start()
         self._uia_worker_thread.start()
-        self._mouse_listener = mouse.Listener(on_click=self._on_click, on_scroll=self._on_scroll)
+        mouse_kwargs = {"on_click": self._on_click, "on_scroll": self._on_scroll}
+        if sys.platform == "win32":
+            mouse_kwargs["win32_event_filter"] = self._mouse_filter
+        self._mouse_listener = mouse.Listener(**mouse_kwargs)
         kb_kwargs = {"on_press": self._on_press, "on_release": self._on_release}
         if sys.platform == "win32":
             # win32_event_filter is pynput's mechanism for actually blocking
@@ -231,8 +248,8 @@ class InputRecorder:
             self._enabled.clear()
 
     # -- event emission --------------------------------------------------
-    def _emit(self, event):
-        line_event = {"t_ms": now_ms(), **event}
+    def _emit(self, event, injected=None):
+        line_event = {"t_ms": now_ms(), **event, **({} if injected is None else {"injected": injected})}
         self._writer.write(line_event)
         if self._on_event:
             self._on_event(line_event)
@@ -271,11 +288,11 @@ class InputRecorder:
             return
         btn = {"left": "left", "right": "right", "middle": "middle"}.get(button.name, button.name)
         if pressed:
-            self._emit({"type": "mouse_down", "button": btn, "x": x, "y": y})
+            self._emit({"type": "mouse_down", "button": btn, "x": x, "y": y}, self._mouse_injected)
             self._queue_screenshot("trigger")
             self._uia_q.put(("uia_query", x, y))
         else:
-            self._emit({"type": "mouse_up", "button": btn, "x": x, "y": y})
+            self._emit({"type": "mouse_up", "button": btn, "x": x, "y": y}, self._mouse_injected)
         self._touch_activity()
 
     def _on_scroll(self, x, y, dx, dy):
@@ -284,7 +301,7 @@ class InputRecorder:
         t_ms = now_ms()
         is_new_burst = self._last_scroll_t_ms is None or (t_ms - self._last_scroll_t_ms) > SCROLL_BURST_GAP_MS
         self._last_scroll_t_ms = t_ms
-        self._emit({"type": "scroll", "x": x, "y": y, "dx": dx, "dy": dy})
+        self._emit({"type": "scroll", "x": x, "y": y, "dx": dx, "dy": dy}, self._mouse_injected)
         if is_new_burst:
             self._queue_screenshot("trigger")
         self._touch_activity()
@@ -298,6 +315,7 @@ class InputRecorder:
         app; the actual milestone trigger + toast happen afterward in
         _on_press, off this thread, once the (still-fast) on_press callback
         fires as usual."""
+        self._key_injected = bool(getattr(data, "flags", 0) & _LLKHF_INJECTED)
         if not self._enabled.is_set():
             return
         vk = getattr(data, "vkCode", None)
@@ -308,6 +326,10 @@ class InputRecorder:
             # Also suppress the matching key-up, even if a modifier was
             # released first (holding order isn't guaranteed).
             self._keyboard_listener.suppress_event()
+
+    def _mouse_filter(self, msg, data):
+        """pynput's win32-only mouse hook filter: only remembers whether the event was injected."""
+        self._mouse_injected = bool(getattr(data, "flags", 0) & _LLMHF_INJECTED)
 
     def _on_press(self, key):
         if not self._enabled.is_set():
@@ -324,7 +346,7 @@ class InputRecorder:
         t_ms = now_ms()
         is_new_burst = self._last_key_t_ms is None or (t_ms - self._last_key_t_ms) > TYPE_BURST_GAP_MS
         self._last_key_t_ms = t_ms
-        self._emit({"type": "key_down", "key": name})
+        self._emit({"type": "key_down", "key": name}, self._key_injected)
         if name not in ("ctrl", "alt", "shift", "win"):
             # Screenshot on (almost) every key, not just burst starts: a
             # standalone key right after a typing burst (e.g. Enter to
@@ -334,10 +356,10 @@ class InputRecorder:
             self._queue_screenshot("trigger")
         self._touch_activity()
         if is_new_burst:
-            win = window_mod.get_active_window() if sys.platform == "win32" else None
-            is_powershell = bool(win and win.get("process", "").lower() in ("powershell.exe", "pwsh.exe"))
-            if not is_powershell:
-                self._uia_q.put(("uia_focused",))
+            # The foreground window is looked up by the UIA worker, not here: GetWindowText waits for the
+            # window's process, which can be busy (for instance answering the previous UIA query), and a
+            # slow hook callback makes Windows skip keystrokes.
+            self._uia_q.put(("uia_focused",))
 
     def _on_release(self, key):
         if not self._enabled.is_set():
@@ -348,7 +370,7 @@ class InputRecorder:
             return
         if name in ("ctrl", "alt", "shift"):
             self._mods.discard(name)
-        self._emit({"type": "key_up", "key": name})
+        self._emit({"type": "key_up", "key": name}, self._key_injected)
         self._touch_activity()
 
     def _trigger_milestone(self):
@@ -384,6 +406,10 @@ class InputRecorder:
                     target = uia.query_at_point(x, y)
                     self._emit({"type": "uia_query", "x": x, "y": y, "target": target})
                 elif kind == "uia_focused":
+                    # No UIA query in PowerShell windows: their text is recorded by the transcript hook.
+                    win = window_mod.get_active_window() if sys.platform == "win32" else None
+                    if win and win.get("process", "").lower() in ("powershell.exe", "pwsh.exe"):
+                        continue
                     target = uia.query_focused()
                     self._emit({"type": "uia_focused", "target": target})
             except Exception as exc:

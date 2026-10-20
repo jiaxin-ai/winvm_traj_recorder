@@ -29,7 +29,7 @@ import sys
 import threading
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 ADAPTERS_ROOT = Path(__file__).resolve().parent / "adapters"
@@ -184,7 +184,7 @@ class SoftwareManager:
 
     # -- logging -----------------------------------------------------------
     def log(self, source, msg):
-        line = f"{datetime.now().isoformat(timespec='milliseconds')} [{source}] {msg}\n"
+        line = f"{datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')} [{source}] {msg}\n"
         with self._log_lock:
             self.raw_dir.mkdir(parents=True, exist_ok=True)
             with (self.raw_dir / "adapters.log").open("a", encoding="utf-8") as f:

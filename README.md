@@ -307,7 +307,7 @@ $env:MOCK_FAULT = "crash"; python main.py --output C:\traj --task task.json --wa
 2. **轮询间隔**:`window.py` 约 200ms(task.md 未给出数值);`processes.py` 约 500ms(task.md 给了这个建议值)。
 3. **shell_command 与 transcript 的对应**:PowerShell transcript 本身不带逐条命令的时间戳(只有整个 transcript 的开始/结束时间),所以按"PowerShell 窗口里出现 Enter 的顺序"依次消费解析出的命令列表,不做时间戳精确匹配。
 4. **`--output` 参数语义**:作为输出根目录,实际 episode 目录是 `<output>\<episode_id>`,对应 task.md 示意图里的 `output/<episode_id>/`。
-5. **`timestamp` 时区**:固定按 `+08:00` 渲染(task.md 没有说明如何取 VM 实际时区)。
+5. **`timestamp` 时区**:按 UTC 渲染,以 `Z` 结尾,与 `t_ms` 表示同一时刻,和 HarnessStudio / vm_manager 的时间直接对齐(原来固定按 `+08:00` 渲染)。
 6. **进程过滤**:按用户名后缀匹配(去掉 `NT AUTHORITY\SYSTEM` 这种域/机器前缀)+ 一份系统后台进程名单(svchost、conhost 等)。`exit` 事件如果查不到 user 信息(进程已退出),只要它在 `start` 时被采纳过就仍然保留,避免误删。
 7. **type_text 的 focused UIA 查询时机**:在"打字序列可能开始"时查一次(非修饰键、且与上次按键间隔超过 1.5 秒),不是每次按键都查;匹配到具体 action 时,同样用"查询时间 ≥ 打字开始时间"(而不是"之前最近一次"),原因和截图匹配方向一致。
 8. **录屏帧率**:ffmpeg 固定用 10fps(task.md 未规定具体数值)。

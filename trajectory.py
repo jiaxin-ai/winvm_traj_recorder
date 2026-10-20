@@ -20,10 +20,9 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-# Local timezone used for the human-readable `timestamp` field. task.md's
-# examples use +08:00; there is no spec for reading the real VM timezone,
-# so this is fixed (see README "简化" section).
-TZ = timezone(timedelta(hours=8))
+# The human-readable `timestamp` field is UTC (ending in Z), like t_ms, so it lines up
+# with HarnessStudio and vm_manager whatever the VM's or the user's time zone is.
+TZ = timezone.utc
 
 DOUBLE_CLICK_MAX_GAP_MS = 500
 DOUBLE_CLICK_MAX_DIST = 5
@@ -620,7 +619,7 @@ def build_steps(raw_events, transcript_commands, snapshot_events=None, snapshot_
     })
 
     for s in steps:
-        s["timestamp"] = datetime.fromtimestamp(s["t_ms"] / 1000, tz=TZ).isoformat(timespec="milliseconds")
+        s["timestamp"] = datetime.fromtimestamp(s["t_ms"] / 1000, tz=TZ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
     _assign_snapshots(steps, snapshot_events or [], snapshot_enabled)
     _assign_software_records(steps, software, recording_start_t_ms)

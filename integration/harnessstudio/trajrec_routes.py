@@ -28,6 +28,16 @@ and every request carrying an ``X-HarnessStudio-Operation`` header (HarnessStudi
 appended to <episode>\\agent_requests.jsonl with start/end times on the VM clock, so each trajectory step
 can be attributed to the Agent operation that caused it (or to the human).
 
+The recorder can be updated without a new image. vm_manager shares a host directory read-only with every VM
+as \\\\host.lan\\Trajrec:
+
+    current      one line: the name of the version folder to record with, e.g. a7972a4
+    <version>\\   the recorder, laid out like C:\\trajrec\\recorder
+    wheels\\      offline wheels, installed only when the version's requirements.txt differs from C:'s
+
+Before each recording the version named in ``current`` is copied to C:\\trajrec\\recorder. Without the share,
+or when anything fails, the recorder already on C: is used. This file itself stays in the image.
+
 Install: copy this file next to main.py and add, before ``if __name__ == '__main__':``
 
     import trajrec_routes
@@ -58,6 +68,10 @@ FFMPEG_DIR = os.environ.get("TRAJREC_FFMPEG_DIR", r"C:\ffmpeg\bin")  # the image
 WATCH_DIR = os.environ.get("TRAJREC_WATCH", "D:\\")
 RESULT_ROOT = "G:\\"  # vm_manager's recordings share: finished episodes are copied to G:\<recording_id>
 CONTROL_ROOT = r"C:\ProgramData\trajrec"
+SHARE_ROOT = os.environ.get("TRAJREC_SHARE", r"\\host.lan\Trajrec")  # recorder versions; see the module docstring
+VERSION_FILE = "TRAJREC_VERSION"  # in RECORDER_DIR: the share version copied there
+VERSION_NAME = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$")
+PIP_TIMEOUT_S = 300
 READY_TIMEOUT_S = 40
 # How long /recording/stop waits for the episode to be finished and copied. Keep it below vm_manager's
 # recorder_timeout_seconds (60 by default); whatever is left continues in the background.
@@ -79,6 +93,7 @@ log = logging.getLogger("trajrec_routes")
 _lock = threading.Lock()
 # recording_id -> {"process", "episode" (local), "control", "log", "finished": Event, "result": dict | None}
 _recordings = {}
+_update_lock = threading.Lock()
 
 
 def _now_ms():
@@ -226,6 +241,61 @@ def _remove_tree(path):
         log.warning("cannot remove %s: %s", path, exc)
 
 
+def _text(path):
+    """A small text file without surrounding whitespace and with \\n line ends, or None."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().replace("\r\n", "\n").strip()
+    except OSError:
+        return None
+
+
+def recorder_version():
+    return _text(os.path.join(RECORDER_DIR, VERSION_FILE))
+
+
+def _update_recorder():
+    """Makes RECORDER_DIR the version named in the share's `current`, when it is not already. Never raises;
+    returns a line for recorder.log. Called only while no recorder runs."""
+    local = "recorder %s on C:" % (recorder_version() or "from the image")
+    version = _text(os.path.join(SHARE_ROOT, "current"))
+    if version is None:
+        return "%s not available; %s" % (SHARE_ROOT, local)
+    if not VERSION_NAME.match(version):
+        return "invalid version %r in %s; %s" % (version, SHARE_ROOT, local)
+    if recorder_version() == version:
+        return "recorder %s" % version
+    source, staging, old = os.path.join(SHARE_ROOT, version), RECORDER_DIR + ".new", RECORDER_DIR + ".old"
+    try:
+        _remove_tree(staging)
+        shutil.copytree(source, staging, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git"))
+        if not os.path.isfile(os.path.join(staging, "main.py")):
+            raise RuntimeError("no main.py in %s" % source)
+        requirements = os.path.join(staging, "requirements.txt")
+        if _text(requirements) != _text(os.path.join(RECORDER_DIR, "requirements.txt")):
+            pip = subprocess.run([RECORDER_PYTHON, "-m", "pip", "install", "--disable-pip-version-check", "--no-index",
+                                  "--find-links", os.path.join(SHARE_ROOT, "wheels"), "-r", requirements],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=PIP_TIMEOUT_S)
+            if pip.returncode != 0:
+                raise RuntimeError("pip install exited with %s: %s" % (pip.returncode, pip.stdout[-800:].decode("utf-8", "replace")))
+        with open(os.path.join(staging, VERSION_FILE), "w", encoding="utf-8") as handle:
+            handle.write(version + "\n")
+        _remove_tree(old)
+        if os.path.isdir(RECORDER_DIR):
+            os.replace(RECORDER_DIR, old)  # Windows refuses while a process runs in it: then nothing has changed
+        try:
+            os.replace(staging, RECORDER_DIR)
+        except OSError:
+            if os.path.isdir(old) and not os.path.exists(RECORDER_DIR):
+                os.replace(old, RECORDER_DIR)
+            raise
+        _remove_tree(old)
+        return "recorder %s, copied from %s" % (version, SHARE_ROOT)
+    except Exception as exc:
+        _remove_tree(staging)
+        return "recorder %s from %s failed (%s); %s" % (version, SHARE_ROOT, exc, local)
+
+
 def _finish(recording_id, entry):
     """Waits for the recorder to end, makes sure trajectory.jsonl exists, copies the episode to G: and removes
     the local copy. Runs in its own thread; sets entry["finished"]."""
@@ -332,6 +402,15 @@ def recording_start():
     if not IDENTIFIER.match(recording_id) or output_dir.rstrip("\\") != _result(recording_id):
         return jsonify({"status": "error", "message": "invalid recording_id or output_dir"}), 400
     with _lock:
+        idle = _running()[0] is None and recording_id not in _recordings
+    update, update_s = None, 0.0
+    if idle:  # never while a recorder runs from RECORDER_DIR
+        started = time.time()
+        with _update_lock:
+            update = _update_recorder()
+        update_s = time.time() - started
+        log.info("recording %s: %s", recording_id, update)
+    with _lock:
         running_id, running = _running()
         if running_id == recording_id:
             return jsonify({"status": "success", "message": "already recording", "episode": running["episode"]})
@@ -360,6 +439,9 @@ def recording_start():
                    "--milestone-file", os.path.join(entry["control"], "MILESTONE"),
                    "--no-watch-gitignore"]  # D:\ is the task's deliverable; keep the recorder's files out of it
         with open(entry["log"], "ab") as out:
+            if update:
+                out.write(("[trajrec_routes] %s\n" % update).encode("utf-8"))
+                out.flush()
             process = subprocess.Popen(command, cwd=RECORDER_DIR, env=env, stdin=subprocess.DEVNULL, stdout=out,
                                        stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
         with open(os.path.join(entry["control"], "recorder.pid"), "w", encoding="utf-8") as handle:
@@ -367,7 +449,7 @@ def recording_start():
         entry["process"] = process
         _recordings[recording_id] = entry
     threading.Thread(target=_sync, args=(recording_id, entry), name="trajrec-sync-" + recording_id, daemon=True).start()
-    deadline = time.time() + READY_TIMEOUT_S
+    deadline = time.time() + max(5, READY_TIMEOUT_S - update_s)
     while time.time() < deadline:
         if process.poll() is not None:
             message = "recorder exited with %s: %s" % (process.returncode, _tail(entry["log"], 1500))
@@ -424,7 +506,8 @@ def recording_status():
         running_id, running = _running()
         finishing = sorted(key for key in _recordings if key != running_id)
     return jsonify({"status": "success", "recording_id": running_id, "finishing": finishing,
-                    "episode": running["episode"] if running else None, "pid": running["process"].pid if running else None})
+                    "episode": running["episode"] if running else None, "pid": running["process"].pid if running else None,
+                    "recorder_version": recorder_version()})
 
 
 def _operation_started():
